@@ -1,0 +1,13 @@
+[
+ {
+  "docstatus": 0,
+  "doctype": "Client Script",
+  "dt": "Sales Order",
+  "enabled": 1,
+  "modified": "2025-07-23 18:17:56.490251",
+  "module": "Printechs Fashion",
+  "name": "Sales Order",
+  "script": "frappe.ui.form.on('Sales Order', {\r\n    refresh: function(frm) {\r\n        if (frm.doc.docstatus === 1 || frm.doc.docstatus === 2) { // Ensure it's a submitted Sales Order\r\n            frm.add_custom_button(__('Send to Animo'), function() {\r\n                frappe.call({\r\n                    method: 'printechs_fashion.animo_connector.send_sales_order_to_animo',\r\n                    args: {\r\n                        doc: frm.doc.name,\r\n                        method:'on-submit'\r\n                    },\r\n                    callback: function(r) {\r\n                        if (r.message) {\r\n                            frappe.msgprint(__('Sales Order sent to Animo.'));\r\n                        }\r\n                    }\r\n                });\r\n            }, __('Actions'));\r\n        }\r\n    }\r\n});\r\n",
+  "view": "Form"
+ }
+]

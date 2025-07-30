@@ -246,4 +246,9 @@ app_include_css = ["public/css/aramex_shipment.css"]
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
-
+fixtures = [
+    {
+        "dt": "Custom Field",
+        "filters": [["name", "in", ("Sales Order Item-custom_awb_number","Sales Order-custom_awb_number","Sales Order-custom_label_url")]]
+    }
+]
