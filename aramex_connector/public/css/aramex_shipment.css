@@ -1,0 +1,17 @@
+.aramex-tracking-results .tracking-updates table {
+    width: 100%;
+    margin-top: 15px;
+}
+
+.aramex-tracking-results .tracking-updates th {
+    background-color: #f5f7fa;
+    font-weight: bold;
+}
+
+.aramex-tracking-results .tracking-updates tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+.aramex-tracking-results .notifications {
+    margin-bottom: 15px;
+}

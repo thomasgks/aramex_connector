@@ -1,0 +1,358 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:ARMX{YY}-{#####}",
+ "creation": "2025-07-09 15:00:36.383924",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "shipment_mode_section",
+  "pickup_from_column",
+  "pickup_from_heading",
+  "pickup_from_type",
+  "pickup_company",
+  "pickup_customer",
+  "column_break_qeel",
+  "delivery_to_heading",
+  "delivery_to_type",
+  "delivery_company",
+  "delivery_customer",
+  "shipper_and_consignee_details_section",
+  "shipper_column",
+  "shipper_address",
+  "shipper_address_display",
+  "shipper_contact",
+  "shipper_contact_display",
+  "consignee_column",
+  "consignee_address",
+  "consignee_address_display",
+  "consignee_contact",
+  "consignee_contact_display",
+  "amended_from",
+  "shipment_delivery_notes_section",
+  "delivery_notes",
+  "shipment_details_section",
+  "number_of_pieces",
+  "description_of_goods",
+  "column_break_omzo",
+  "actual_weight",
+  "unit",
+  "column_break_nxqb",
+  "total_value",
+  "payment_state",
+  "amount_to_collect",
+  "section_break_abnp",
+  "shipmet_date",
+  "is_return",
+  "column_break_jjox",
+  "awb_number",
+  "label_url",
+  "shipment_status",
+  "integration_info_tab",
+  "api_call_status",
+  "api_response",
+  "api_payload"
+ ],
+ "fields": [
+  {
+   "fieldname": "shipment_mode_section",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "pickup_from_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "pickup_from_heading",
+   "fieldtype": "Heading",
+   "label": "Pickup from"
+  },
+  {
+   "fieldname": "pickup_from_type",
+   "fieldtype": "Select",
+   "label": "Pickup from",
+   "options": "Company\nCustomer",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.pickup_from_type == 'Company'",
+   "fieldname": "pickup_company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "depends_on": "eval:doc.pickup_from_type == 'Customer'\r\n",
+   "fieldname": "pickup_customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "column_break_qeel",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "delivery_to_heading",
+   "fieldtype": "Heading",
+   "label": "Delivery to"
+  },
+  {
+   "fieldname": "delivery_to_type",
+   "fieldtype": "Select",
+   "label": "Delivery to",
+   "options": "Company\nCustomer"
+  },
+  {
+   "depends_on": "eval:doc.delivery_to_type == 'Company'\r\n",
+   "fieldname": "delivery_company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "depends_on": "eval:doc.delivery_to_type == 'Customer'\r\n",
+   "fieldname": "delivery_customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "shipper_and_consignee_details_section",
+   "fieldtype": "Section Break",
+   "label": "Shipper and Consignee Details"
+  },
+  {
+   "fieldname": "shipper_column",
+   "fieldtype": "Column Break",
+   "label": "Shipper"
+  },
+  {
+   "fieldname": "shipper_address",
+   "fieldtype": "Link",
+   "label": "Shipper Address",
+   "options": "Address",
+   "reqd": 1
+  },
+  {
+   "fieldname": "shipper_address_display",
+   "fieldtype": "Small Text",
+   "label": "Shipper Address Display",
+   "read_only": 1
+  },
+  {
+   "fieldname": "shipper_contact",
+   "fieldtype": "Link",
+   "label": "Shipper Contact",
+   "options": "Contact",
+   "reqd": 1
+  },
+  {
+   "fieldname": "shipper_contact_display",
+   "fieldtype": "Small Text",
+   "label": "Shipper Contact Display",
+   "read_only": 1
+  },
+  {
+   "fieldname": "consignee_column",
+   "fieldtype": "Column Break",
+   "label": "Consignee"
+  },
+  {
+   "fieldname": "consignee_address",
+   "fieldtype": "Link",
+   "label": "Consignee Address",
+   "options": "Address",
+   "reqd": 1
+  },
+  {
+   "fieldname": "consignee_address_display",
+   "fieldtype": "Small Text",
+   "label": "Consignee Address Display",
+   "read_only": 1
+  },
+  {
+   "fieldname": "consignee_contact",
+   "fieldtype": "Link",
+   "label": "Consignee Contact",
+   "options": "Contact",
+   "reqd": 1
+  },
+  {
+   "fieldname": "consignee_contact_display",
+   "fieldtype": "Small Text",
+   "label": "Consignee Contact Display",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Aramex Shipment",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "shipment_delivery_notes_section",
+   "fieldtype": "Section Break",
+   "label": "Shipment Delivery Notes"
+  },
+  {
+   "fieldname": "delivery_notes",
+   "fieldtype": "Table",
+   "label": "Delivery Notes",
+   "options": "Aramex Shipment Delivery Note",
+   "read_only": 1
+  },
+  {
+   "fieldname": "shipment_details_section",
+   "fieldtype": "Section Break",
+   "label": "Shipment Summary"
+  },
+  {
+   "fieldname": "number_of_pieces",
+   "fieldtype": "Int",
+   "label": "Number Of Pieces",
+   "reqd": 1
+  },
+  {
+   "default": "Shoes and Accessories",
+   "fieldname": "description_of_goods",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Description Of Goods",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_omzo",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "actual_weight",
+   "fieldtype": "Float",
+   "label": "Actual Weight",
+   "reqd": 1
+  },
+  {
+   "default": "KG",
+   "fieldname": "unit",
+   "fieldtype": "Select",
+   "label": "Unit",
+   "options": "KG\nLB"
+  },
+  {
+   "fieldname": "column_break_nxqb",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_value",
+   "fieldtype": "Currency",
+   "label": "Total Value"
+  },
+  {
+   "fieldname": "payment_state",
+   "fieldtype": "Select",
+   "label": "Payment State",
+   "options": "COD\nPrepaid",
+   "reqd": 1
+  },
+  {
+   "fieldname": "amount_to_collect",
+   "fieldtype": "Currency",
+   "label": "Amount To Collect"
+  },
+  {
+   "fieldname": "section_break_abnp",
+   "fieldtype": "Section Break",
+   "label": "Shipment Information"
+  },
+  {
+   "fieldname": "shipmet_date",
+   "fieldtype": "Date",
+   "label": "Shipmet Date"
+  },
+  {
+   "fieldname": "column_break_jjox",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "awb_number",
+   "fieldtype": "Data",
+   "label": "AWB Number"
+  },
+  {
+   "fieldname": "label_url",
+   "fieldtype": "Data",
+   "label": "Label URL"
+  },
+  {
+   "fieldname": "shipment_status",
+   "fieldtype": "Select",
+   "label": "Shipment Status",
+   "options": "Draft\nShipped\nDelivered\nCancelled"
+  },
+  {
+   "fieldname": "integration_info_tab",
+   "fieldtype": "Tab Break",
+   "label": "Integration Info"
+  },
+  {
+   "allow_on_submit": 1,
+   "default": "Pending",
+   "fieldname": "api_call_status",
+   "fieldtype": "Select",
+   "label": "Api Call Status",
+   "options": "Pending\nSuccess\nFailed\nError"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "api_response",
+   "fieldtype": "Long Text",
+   "label": "Api Response"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "api_payload",
+   "fieldtype": "JSON",
+   "label": "Api Payload"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_return",
+   "fieldtype": "Check",
+   "label": "Is Return"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2025-07-29 01:41:24.033266",
+ "modified_by": "Administrator",
+ "module": "Aramex Connector",
+ "name": "Aramex Shipment",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

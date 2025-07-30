@@ -1,0 +1,116 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-07-09 12:02:08.616671",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "account_number",
+  "account_pin",
+  "account_entity",
+  "account_country_code",
+  "user_name",
+  "password",
+  "api_version",
+  "default_product_group",
+  "default_product_type",
+  "column_break_gazb",
+  "mode",
+  "test_url",
+  "production_url"
+ ],
+ "fields": [
+  {
+   "fieldname": "account_number",
+   "fieldtype": "Data",
+   "label": "Account Number"
+  },
+  {
+   "fieldname": "account_pin",
+   "fieldtype": "Data",
+   "label": "Account PIN"
+  },
+  {
+   "fieldname": "account_entity",
+   "fieldtype": "Data",
+   "label": "Account Entity"
+  },
+  {
+   "fieldname": "account_country_code",
+   "fieldtype": "Data",
+   "label": "Account Country Code"
+  },
+  {
+   "fieldname": "user_name",
+   "fieldtype": "Data",
+   "label": "User Name"
+  },
+  {
+   "fieldname": "password",
+   "fieldtype": "Password",
+   "label": "Password"
+  },
+  {
+   "fieldname": "api_version",
+   "fieldtype": "Data",
+   "label": "API Version"
+  },
+  {
+   "fieldname": "default_product_group",
+   "fieldtype": "Select",
+   "label": "Default Product Group",
+   "options": "DOM\nEXP"
+  },
+  {
+   "fieldname": "default_product_type",
+   "fieldtype": "Select",
+   "label": "Default Product Type",
+   "options": "OND"
+  },
+  {
+   "fieldname": "column_break_gazb",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "mode",
+   "fieldtype": "Select",
+   "label": "Mode",
+   "options": "Production\nTest"
+  },
+  {
+   "fieldname": "test_url",
+   "fieldtype": "Data",
+   "label": "Test URL"
+  },
+  {
+   "fieldname": "production_url",
+   "fieldtype": "Data",
+   "label": "Production URL"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2025-07-19 21:02:23.726573",
+ "modified_by": "Administrator",
+ "module": "Aramex Connector",
+ "name": "Aramex Setting",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
