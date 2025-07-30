@@ -249,6 +249,6 @@ app_include_css = ["public/css/aramex_shipment.css"]
 fixtures = [
     {
         "dt": "Custom Field",
-        "filters": [["name", "in", ("Sales Order Item-custom_awb_number","Sales Order-custom_awb_number","Sales Order-custom_label_url")]]
+        "filters": [["name", "in", ("Sales Order Item-custom_awb_number","Sales Order-custom_awb_number","Sales Order-custom_label_url","Sales Order Item-custom_label_url")]]
     }
 ]

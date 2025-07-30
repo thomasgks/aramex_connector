@@ -180,10 +180,10 @@ class AramexShipment(Document):
                     # Update only the Sales Order items that are in this delivery note
                     frappe.db.sql("""
                         UPDATE `tabSales Order Item` soi
-                        SET soi.custom_awb_number = %s
+                        SET soi.custom_awb_number = %s, soi.custom_label_url = %s
                         WHERE soi.parent = %s
                         AND soi.item_code IN %s
-                    """, (self.awb_number, so_name, dn_items_map[so_name]))
+                    """, (self.awb_number, self.label_url, self.so_name, dn_items_map[so_name]))
                     
                     frappe.msgprint(_("Updated Sales Order {0} with AWB {1} for delivered items").format(
                         frappe.bold(so_name),
@@ -228,14 +228,15 @@ class AramexShipment(Document):
                         so_name,
                         {
                             "custom_awb_number": None,
-                            "custom_ecommerce_status": "To Deliver"
+                            "custom_label_url": None,
+                            "custom_ecommerce_status": "Preparing for Shipment"
                         }
                     )
                     
                     # Clear AWB only for items that were in this delivery note
                     frappe.db.sql("""
                         UPDATE `tabSales Order Item` soi
-                        SET soi.custom_awb_number = NULL
+                        SET soi.custom_awb_number = NULL, soi.custom_label_url=NULL
                         WHERE soi.parent = %s
                         AND soi.item_code IN %s
                     """, (so_name, dn_items_map[so_name]))
