@@ -46,12 +46,16 @@
   "is_return",
   "column_break_jjox",
   "awb_number",
+  "pickup_id",
   "label_url",
   "shipment_status",
   "integration_info_tab",
   "api_call_status",
+  "pickup_api_call_status",
   "api_response",
-  "api_payload"
+  "pickup_api_response",
+  "api_payload",
+  "pickup_api_payload"
  ],
  "fields": [
   {
@@ -292,7 +296,7 @@
    "fieldname": "shipment_status",
    "fieldtype": "Select",
    "label": "Shipment Status",
-   "options": "Draft\nShipped\nDelivered\nCancelled"
+   "options": "Draft\nShipped\nDelivered\nCancelled\nScheduled"
   },
   {
    "fieldname": "integration_info_tab",
@@ -304,33 +308,58 @@
    "default": "Pending",
    "fieldname": "api_call_status",
    "fieldtype": "Select",
-   "label": "Api Call Status",
+   "label": "Shipment Api Call Status",
    "options": "Pending\nSuccess\nFailed\nError"
   },
   {
    "allow_on_submit": 1,
    "fieldname": "api_response",
    "fieldtype": "Long Text",
-   "label": "Api Response"
+   "label": "Shipment Api Response"
   },
   {
    "allow_on_submit": 1,
    "fieldname": "api_payload",
    "fieldtype": "JSON",
-   "label": "Api Payload"
+   "label": "Shipment Api Payload"
   },
   {
    "default": "0",
    "fieldname": "is_return",
    "fieldtype": "Check",
    "label": "Is Return"
+  },
+  {
+   "fieldname": "pickup_id",
+   "fieldtype": "Data",
+   "label": "Pickup ID"
+  },
+  {
+   "allow_on_submit": 1,
+   "default": "Pending",
+   "fieldname": "pickup_api_call_status",
+   "fieldtype": "Select",
+   "label": "Pickup Api Call Status",
+   "options": "Pending\nSuccess\nFailed\nError"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "pickup_api_response",
+   "fieldtype": "Long Text",
+   "label": "Pickup Api Response"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "pickup_api_payload",
+   "fieldtype": "JSON",
+   "label": "Pickup Api Payload"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2025-07-29 01:41:24.033266",
+ "modified": "2025-08-02 01:25:26.813839",
  "modified_by": "Administrator",
  "module": "Aramex Connector",
  "name": "Aramex Shipment",

@@ -2,7 +2,7 @@ import frappe
 import requests
 import json
 from frappe.utils import get_datetime
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import xml.etree.ElementTree as ET
 import html
@@ -39,7 +39,330 @@ def test():
 @frappe.whitelist()
 def create_aramex_shipment1(doc, method):
     return "OKOKOK"
+ 
+@frappe.whitelist()
+def create_aramex_shipment_with_pickup(doc, method):
+    """
+    Create a shipment with pickup by first creating the pickup request,
+    then using the pickup GUID to create the shipment.
+    """
+    if isinstance(doc, str):
+        doc = frappe.get_doc("Aramex Shipment", doc)
     
+    # First create the pickup
+    pickup_result = create_pickup_ws(doc, method)
+    
+    if not pickup_result.get("success"):
+        frappe.throw("Failed to create pickup: " + pickup_result.get("message", "Unknown error"))
+    
+    pickup_guid = pickup_result["pickup_guid"]
+    
+    # Now create the shipment with the pickup GUID
+    return create_aramex_shipment_ws_with_pickup(doc, method, pickup_guid)
+
+@frappe.whitelist()
+def create_aramex_shipment_ws_with_pickup(doc, method, pickup_guid):
+    """
+    Modified version of create_aramex_shipment_ws that includes the pickup GUID
+    """
+    if isinstance(doc, str):
+        doc = frappe.get_doc("Aramex Shipment", doc)
+       
+    # Get the first item's Sales Order reference
+    reference_no = doc.delivery_notes[0].sales_order if doc.delivery_notes and hasattr(doc.delivery_notes[0], "sales_order") else "Unknown"
+    
+    settings = frappe.get_single("Aramex Setting")
+        
+    # Get address/contact details
+    shipper_address = frappe.get_doc("Address", doc.shipper_address)
+    shipper_contact = frappe.get_doc("Contact", doc.shipper_contact)
+    consignee_address = frappe.get_doc("Address", doc.consignee_address)
+    consignee_contact = frappe.get_doc("Contact", doc.consignee_contact)
+    
+    shipper = None
+    consignee = None
+    if doc.is_return:
+        shipper = get_party_details(shipper_address.name, shipper_contact.name, reference_no, is_shipper=True, settings=settings)
+        consignee = get_party_details(consignee_address.name, consignee_contact.name, reference_no, is_shipper=False, settings=settings)
+    else:
+        shipper = get_party_details(shipper_address.name, shipper_contact.name, reference_no, is_shipper=True, settings=settings)
+        consignee = get_party_details(consignee_address.name, consignee_contact.name, reference_no, is_shipper=False, settings=settings)
+        
+    dt = datetime.now()
+    unix_ms = int(time.mktime(dt.timetuple()) * 1000)
+    formatted_date = f"/Date({unix_ms})/"
+    
+    payload = {
+        "ClientInfo": {
+            "UserName": settings.user_name,
+            "Password": settings.get_password("password"),
+            "Version": settings.api_version,
+            "AccountNumber": settings.account_number,
+            "AccountPin": settings.account_pin,
+            "AccountEntity": settings.account_entity,
+            "AccountCountryCode": settings.account_country_code,
+            "Source": 24
+        },
+        "Transaction": {
+            "Reference1": reference_no,
+            "Reference2": doc.name,
+            "Reference3": "",
+            "Reference4": "",
+            "Reference5": ""
+        },
+        "Shipments": [{
+            "Reference1": "",
+            "Reference2": "",
+            "Reference3": "",
+            "Shipper": shipper,
+            "Consignee": consignee,
+            "ThirdParty": None,
+            "ShippingDateTime": formatted_date,
+            "DueDate": formatted_date,
+            "Comments": "",
+            "PickupLocation": "",
+            "OperationsInstructions": "",
+            "AccountingInstrcutions": "",
+            "Attachments": [],
+            "ForeignHAWB": "",
+            "TransportType ": 0,
+            "PickupGUID": pickup_guid,  # This is the key addition - using the pickup GUID
+            "Number": None,
+            "ScheduledDelivery": None,
+            "Details": {
+                "ActualWeight": {"Value": doc.actual_weight, "Unit": doc.unit},                
+                "Dimensions": None,
+                "ChargeableWeight": None,
+                "ProductGroup": settings.default_product_group,
+                "ProductType": settings.default_product_type,
+                "PaymentType": "P",
+                "NumberOfPieces": doc.number_of_pieces,
+                "DescriptionOfGoods": doc.description_of_goods,
+                "GoodsOriginCountry": shipper["PartyAddress"]["CountryCode"],
+                "CashOnDeliveryAmount": None if doc.payment_state=="Prepaid" else { 
+                    "Value": doc.amount_to_collect, 
+                    "CurrencyCode": "SAR" 
+                },
+                "PaymentOptions": "",
+                "CustomsValueAmount": None,
+                "InsuranceAmount": {
+                    "CurrencyCode": "SAR",
+                    "Value": 0
+                },
+                "CashAdditionalAmount": None,
+                "CashAdditionalAmountDescription": "",
+                "CollectAmount": None,
+                "Services": "" if doc.payment_state=="Prepaid" else "CODS",
+                "Items": []
+            }
+        }],
+        "LabelInfo": {
+            "ReportID": 9201,
+            "ReportType": "URL"
+        }
+    }
+    
+    return call_aramex_api(payload, doc)
+
+# Keep all the existing helper functions (get_party_details, call_aramex_api, etc.)
+# They can remain exactly the same as in your original code
+ 
+ 
+
+def get_party_details(address, contact, reference_no, is_shipper=False, settings=None):
+    
+    addr = frappe.get_doc("Address", address)
+    cntct = frappe.get_doc("Contact", contact)
+    
+    country=frappe.get_doc("Country", addr.country)
+    return {
+        "Reference1": reference_no,
+        "Reference2": "",
+        "AccountNumber": settings.account_number if is_shipper else "",
+        #"AccountEntity": settings.account_entity if is_shipper else None,
+        "PartyAddress": {
+            "Line1": addr.address_line1,
+            "Line2": addr.address_line2 or "",
+            "Line3":"",
+            "City": addr.city,
+            "StateOrProvinceCode":"", #addr.state,
+            "PostCode": "", #addr.pincode,
+            "CountryCode": country.code,
+            "Longitude": 0,
+            "Latitude": 0,
+            "BuildingNumber": "",
+            "BuildingName": "",
+            "Floor": "",
+            "Apartment": "",
+            "POBox": None,
+            "Description": ""
+            
+        },
+        "Contact": {
+            "Department": "",
+            "PersonName": cntct.first_name,
+            "Title": "",
+            "CompanyName": cntct.company_name or cntct.first_name,
+            "PhoneNumber1": cntct.phone,
+            "PhoneNumber1Ext": "",
+            "PhoneNumber2":"",
+            "PhoneNumber2Ext": "",
+            "FaxNumber": "",
+            "CellPhone": cntct.phone,
+            "EmailAddress": cntct.email_id,
+            "Type":""
+        }
+    }
+    
+def call_aramex_api(payload, doc):
+    settings = frappe.get_cached_doc("Aramex Setting")
+    so_no = doc.delivery_notes[0].sales_order if doc.delivery_notes and hasattr(doc.delivery_notes[0], "sales_order") else "Unknown"
+    url = settings.test_url if settings.mode=="Test" else settings.production_url
+    full_url = url + "/CreateShipments"
+    
+    print(f"Doc: {doc.name}")
+    print(f"Aramex Request URL: {full_url}")
+    print(f"Aramex Request Payload: {json.dumps(payload, indent=2)}")
+    
+    try:
+        response = requests.post(
+            full_url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+        
+        print(f"HTTP Status: {response.status_code}")
+        print(f"Response Content: {response.text}")
+
+        if response.status_code == 200:
+            if 'application/json' not in response.headers.get('Content-Type', ''):
+                xml_string = html.unescape(response.text)
+                try:
+                    parsed_xml = xml.dom.minidom.parseString(xml_string)
+                    formatted_xml = parsed_xml.toprettyxml(indent="  ")
+                except Exception:
+                    formatted_xml = xml_string
+
+                ns = {'ns': 'http://ws.aramex.net/ShippingAPI/v1/'}
+                root = ET.fromstring(xml_string)
+                has_errors = root.find('.//ns:HasErrors', ns).text
+                               
+                if has_errors == "true":
+                    update_fields = {
+                        "api_call_status": "Error",
+                        "api_payload": json.dumps(payload, indent=4),
+                        "api_response": formatted_xml
+                    }
+                    frappe.db.set_value(doc.doctype, doc.name, update_fields)
+                    frappe.db.commit()
+                    frappe.publish_realtime('doc_update', {
+                        'doc': doc.as_dict(),
+                        'doctype': doc.doctype,
+                        'name': doc.name
+                    })
+                else:
+                    shipment_id = root.find('.//ns:ProcessedShipment/ns:ID', ns).text
+                    label_url = root.find('.//ns:ProcessedShipment/ns:ShipmentLabel/ns:LabelURL', ns).text
+                    status = "Scheduled" if doc.is_return else "Shipped"
+                    
+                    doc.api_call_status= "Success"
+                    doc.api_payload= json.dumps(payload, indent=4)
+                    doc.api_response= formatted_xml
+                    doc.awb_number= shipment_id
+                    doc.label_url= label_url                    
+                    doc.shipment_status= status
+                        
+                    update_fields = {
+                        "api_call_status": "Success",
+                        "api_payload": json.dumps(payload, indent=4),
+                        "api_response": formatted_xml,
+                        "awb_number": shipment_id,
+                        "label_url": label_url,
+                        "shipment_status": status
+                    }
+                    frappe.db.set_value(doc.doctype, doc.name, update_fields)
+                    frappe.db.commit()
+                    
+                    # Refresh UI
+                    frappe.publish_realtime('doc_update', {
+                        'doc': update_fields,
+                        'doctype': doc.doctype,
+                        'name': doc.name
+                    })
+                    frappe.logger().info(f"Aramex Shipment Success - AWB: {shipment_id}")
+            else:
+                data = response.json()
+                if data.get("HasErrors", True):
+                    handle_errors(data, doc)
+                else:
+                    update_shipment_details(data, doc)
+                
+                # Refresh UI after update
+                frappe.publish_realtime('doc_update', {
+                    'doc': frappe.get_doc(doc.doctype, doc.name).as_dict(),
+                    'doctype': doc.doctype,
+                    'name': doc.name
+                })
+        else:
+            update_fields = {
+                "api_call_status": "Error",
+                "api_response": response.text
+            }
+            frappe.db.set_value(doc.doctype, doc.name, update_fields)
+            frappe.db.commit()
+            frappe.publish_realtime('doc_update', {
+                'doc': update_fields,
+                'doctype': doc.doctype,
+                'name': doc.name
+            })
+            frappe.log_error(f"Aramex API Error: {response.text}")
+            
+    except Exception as e:
+        update_fields = {
+            "api_call_status": "Error",
+            "api_response": str(e)
+        }
+        frappe.db.set_value(doc.doctype, doc.name, update_fields)
+        frappe.db.commit()
+        frappe.publish_realtime('doc_update', {
+            'doc': update_fields,
+            'doctype': doc.doctype,
+            'name': doc.name
+        })
+        frappe.log_error(f"Aramex API Error: {str(e)}")
+        frappe.throw("Failed to connect to Aramex")
+
+def update_shipment_details(response, doc):
+    shipment = response["Shipments"][0]
+    update_fields = {
+        "awb_number": shipment["ID"],
+        "label_url": shipment["ShipmentLabel"]["LabelURL"],
+        "shipment_status": "Shipped",
+        "api_call_status": "Success",
+        "api_payload": json.dumps(response, indent=4)
+    }
+    frappe.db.set_value(doc.doctype, doc.name, update_fields)
+    frappe.db.commit()
+    return update_fields
+    
+def handle_errors(response, doc):
+    errors = [f"{e['Code']}: {e['Message']}" for e in response["Notifications"]]
+    update_fields = {
+        "shipment_status": "Failed",
+        "api_call_status": "Error",
+        "api_response": json.dumps(errors, indent=2)
+    }
+    frappe.db.set_value(doc.doctype, doc.name, update_fields)
+    frappe.db.commit()
+    frappe.publish_realtime('doc_update', {
+        'doc': update_fields,
+        'doctype': doc.doctype,
+        'name': doc.name
+    })
+    frappe.log_error(f"Aramex Error: {json.dumps(errors)}", doc.name)
+    frappe.throw("<br>".join(errors))
+#OLD   
 @frappe.whitelist()
 def create_aramex_shipment_ws(doc, method):
     
@@ -67,9 +390,16 @@ def create_aramex_shipment_ws(doc, method):
     
     consignee_contact = frappe.get_doc("Contact", doc.consignee_contact)
     print(consignee_contact.first_name)
-
-    shipper = get_party_details(shipper_address.name, shipper_contact.name, reference_no, is_shipper=True,  settings=settings)
-    consignee = get_party_details(consignee_address.name, consignee_contact.name, reference_no, is_shipper=False, settings=settings)
+    
+    shipper=None
+    consignee=None
+    if doc.is_return:
+        shipper = get_party_details(shipper_address.name, shipper_contact.name, reference_no, is_shipper=False,  settings=settings)
+        consignee = get_party_details(consignee_address.name, consignee_contact.name, reference_no, is_shipper=True, settings=settings)
+    else:
+        shipper = get_party_details(shipper_address.name, shipper_contact.name, reference_no, is_shipper=True,  settings=settings)
+        consignee = get_party_details(consignee_address.name, consignee_contact.name, reference_no, is_shipper=False, settings=settings)
+        
     
     
     #dt = datetime.strptime("2025-07-21T12:16:10", "%Y-%m-%dT%H:%M:%S")
@@ -148,67 +478,128 @@ def create_aramex_shipment_ws(doc, method):
     }
     return call_aramex_api(payload, doc)
 
-def get_party_details(address, contact, reference_no, is_shipper=False, settings=None):
+ #*****************************************PICKUP**********************************************************
+@frappe.whitelist()
+def create_pickup_ws(doc, method):
+    """
+    Create a pickup request for a return shipment from the customer
+    """
+    if isinstance(doc, str):
+        doc = frappe.get_doc("Aramex Shipment", doc)
     
-    addr = frappe.get_doc("Address", address)
-    cntct = frappe.get_doc("Contact", contact)
+    settings = frappe.get_single("Aramex Setting")
     
-    country=frappe.get_doc("Country", addr.country)
-    return {
-        "Reference1": reference_no,
-        "Reference2": "",
-        "AccountNumber": settings.account_number if is_shipper else "",
-        "PartyAddress": {
-            "Line1": addr.address_line1,
-            "Line2": addr.address_line2 or "",
-            "Line3":"",
-            "City": addr.city,
-            "StateOrProvinceCode":"", #addr.state,
-            "PostCode": "", #addr.pincode,
-            "CountryCode": country.code,
-            "Longitude": 0,
-            "Latitude": 0,
-            "BuildingNumber": "",
-            "BuildingName": "",
-            "Floor": "",
-            "Apartment": "",
-            "POBox": None,
-            "Description": ""
-            
+    # Get the original shipment details for reference
+    reference_no = doc.delivery_notes[0].sales_order if doc.delivery_notes and hasattr(doc.delivery_notes[0], "sales_order") else "Unknown"
+    
+    # Get the return address (usually your warehouse/office)
+    return_address = frappe.get_doc("Address", doc.shipper_address)
+    return_contact = frappe.get_doc("Contact", doc.shipper_contact)
+    
+     # Prepare pickup date/time - typically next business day
+    pickup_date = datetime.now() + timedelta(days=1)
+    ready_time = pickup_date.replace(hour=9, minute=0, second=0)  # 9 AM
+    last_pickup_time = pickup_date.replace(hour=17, minute=0, second=0)  # 5 PM
+    
+    # Calculate timestamps
+    pickup_timestamp = int(time.mktime(pickup_date.timetuple()) * 1000)
+    ready_timestamp = int(time.mktime(ready_time.timetuple()) * 1000)
+    last_pickup_timestamp = int(time.mktime(last_pickup_time.timetuple()) * 1000)
+
+    
+    payload = {
+        "ClientInfo": {
+            "UserName": settings.user_name,
+            "Password": settings.get_password("password"),
+            "Version": settings.api_version,
+            "AccountNumber": settings.account_number,
+            "AccountPin": settings.account_pin,
+            "AccountEntity": settings.account_entity,
+            "AccountCountryCode": settings.account_country_code,
+            "Source": 24
         },
-        "Contact": {
-            "Department": "",
-            "PersonName": cntct.first_name,
-            "Title": "",
-            "CompanyName": cntct.company_name or cntct.first_name,
-            "PhoneNumber1": cntct.phone,
-            "PhoneNumber1Ext": "",
-            "PhoneNumber2":"",
-            "PhoneNumber2Ext": "",
-            "FaxNumber": "",
-            "CellPhone": cntct.phone,
-            "EmailAddress": cntct.email_id,
-            "Type":""
+        "Transaction": {
+            "Reference1": f"RETURN-{reference_no}",
+            "Reference2": doc.name,
+            "Reference3": "",
+            "Reference4": "",
+            "Reference5": ""
+        },
+        "Pickup": {
+            "Reference1": f"RETURN-{reference_no}",
+            "Reference2": "",
+            "Comments": "Return pickup for order {reference_no}",  
+            "Vehicle": "", 
+            "PickupAddress": {
+                "Line1": return_address.address_line1,
+                "Line2": return_address.address_line2 or "",
+                "Line3":"",
+                "City": return_address.city,
+                "CountryCode": frappe.get_doc("Country", return_address.country).code,
+                "PostCode": return_address.pincode or "",
+                "Longitude": 0,
+                "Latitude": 0,
+                "BuildingNumber": "",
+                "BuildingName": "",
+                "Floor": "",
+                "Apartment": "",
+                "POBox": None,
+                "Description": ""
+            },
+            "PickupContact": {
+                "Department": "",
+                "PersonName": return_contact.first_name,
+                "Title": "",
+                "CompanyName": return_contact.company_name or return_contact.first_name,
+                "PhoneNumber1": return_contact.phone,
+                "PhoneNumber1Ext": "",
+                "PhoneNumber2": "",
+                "PhoneNumber2Ext": "",
+                "FaxNumber": "",
+                "CellPhone": return_contact.phone,
+                "EmailAddress": return_contact.email_id,
+                "Type": ""
+            },
+            "PickupLocation": "Reception",  # or specific location at the address
+            "PickupDate": f"/Date({pickup_timestamp})/",
+            "ReadyTime": f"/Date({ready_timestamp})/",
+            "LastPickupTime": f"/Date({last_pickup_timestamp})/",
+            "ClosingTime": f"/Date({last_pickup_timestamp})/",
+            "Status": "Ready",
+            "PickupItems": [{
+                "PackageType":"",
+                "ProductGroup": settings.default_product_group,
+                "ProductType": settings.default_product_type,
+                "Payment": "P",  # Prepaid
+                "NumberOfShipments": 1,
+                "ShipmentWeight": {
+                    "Value": doc.actual_weight,
+                    "Unit": doc.unit
+                },
+                "ShipmentVolume": None,
+                "NumberOfPieces": doc.number_of_pieces,
+                "CashAmount": None,
+                "ExtraCharges": None,
+                "ShipmentDimensions": None,
+                "Comments": f"Return for {reference_no}"
+            }]
+        },
+        "LabelInfo": {
+            "ReportID": 9201,
+            "ReportType": "URL"
         }
     }
     
-def call_aramex_api(payload, doc):
+    return call_aramex_pickup_api(payload, doc)
+
+def call_aramex_pickup_api(payload, doc):
     settings = frappe.get_cached_doc("Aramex Setting")
-    so_no = doc.delivery_notes[0].sales_order if doc.delivery_notes and hasattr(doc.delivery_notes[0], "sales_order") else "Unknown"
-    url = settings.test_url if settings.mode=="Test" else settings.production_url
-    full_url = url + "/CreateShipments"
+    url = settings.test_url if settings.mode == "Test" else settings.production_url
+    full_url = url + "/CreatePickup"
     
     print(f"Doc: {doc.name}")
-   
-    # Mask sensitive data for logging
-    logged_payload = dict(payload)
-    #logged_payload["ClientInfo"]["Password"] = "***"
-    #logged_payload["ClientInfo"]["AccountPin"] = "***"
-    
-    #frappe.logger().info(f"Aramex Request URL: {full_url}")
-    #frappe.logger().info(f"Aramex Request Payload: {json.dumps(logged_payload, indent=2)}")
     print(f"Aramex Request URL: {full_url}")
-    print(f"Aramex Request Payload: {json.dumps(logged_payload, indent=2)}")
+    print(f"Aramex Request Payload: {json.dumps(payload, indent=2)}")
     
     try:
         response = requests.post(
@@ -217,126 +608,145 @@ def call_aramex_api(payload, doc):
             headers={"Content-Type": "application/json"},
             timeout=30
         )
-       # response_json = response.json() #if response_status == 200 #else {"error": response.text}
-       
         
-        #frappe.logger().info(f"HTTP Status: {response.status_code}")
-        #frappe.logger().info(f"Response Content: {response.text[:500]}")  # First 500 chars
-        print(f"HTTP Status: {response.status_code}")
-        print(f"Response Content: {response.text}")  # First 500 chars
-        if response.status_code==200:
-            # Handle non-JSON responses
-            
-            if 'application/json' not in response.headers.get('Content-Type', ''):            
-                # 1. Unescape the HTML entities
+        if response.status_code == 200:
+            if 'application/json' not in response.headers.get('Content-Type', ''):
                 xml_string = html.unescape(response.text)
-                formatted_xml=None          
+                
                 try:
                     parsed_xml = xml.dom.minidom.parseString(xml_string)
                     formatted_xml = parsed_xml.toprettyxml(indent="  ")
                 except Exception:
-                    # fallback to raw if parsing fails
                     formatted_xml = xml_string
 
-                # 2. Define namespace
                 ns = {'ns': 'http://ws.aramex.net/ShippingAPI/v1/'}
-
-                # 3. Parse XML
                 root = ET.fromstring(xml_string)
-
-                # 4. Extract values
-                has_errors = root.find('.//ns:HasErrors', ns).text 
-                               
+                has_errors = root.find('.//ns:HasErrors', ns).text
+                
                 if has_errors == "true":
-                    # doc.db_set("api_call_status", "Error")                    
-                    # doc.db_set("api_payload", json.dumps(payload, indent=4))
-                    # doc.db_set("api_response", formatted_xml)
-                    #frappe.throw(f"Triggered! HTTP Status:{doc.name}{has_errors}, {response.status_code}, ERROR_FE {formatted_xml}")
                     frappe.db.set_value(doc.doctype, doc.name, {
-                            "api_call_status": "Error",
-                            "api_payload": json.dumps(payload, indent=4),
-                            "api_response": formatted_xml
-                        })
+                        "pickup_api_call_status": "Error",
+                        "pickup_api_payload": json.dumps(payload, indent=4),
+                        "pickup_api_response": formatted_xml
+                    })
                     frappe.db.commit()
-
-
-                    #frappe.throw(f"Triggered! HTTP Status:{has_errors}, {response.status_code}, ERROR_FE {formatted_xml}")
-                    frappe.logger().error(f"Aramex returned non-JSON response: {response.text}")
+                    frappe.log_error(f"Aramex Pickup Error: {formatted_xml}")
                 else:
-                    shipment_id = root.find('.//ns:ProcessedShipment/ns:ID', ns).text
-                    label_url = root.find('.//ns:ProcessedShipment/ns:ShipmentLabel/ns:LabelURL', ns).text
-                    doc.api_call_status= "Success"
-                    doc.api_payload= json.dumps(payload, indent=4)
-                    doc.api_response= formatted_xml
-                    doc.awb_number= shipment_id
-                    doc.label_url= label_url
-                    doc.shipment_status= "Shipped"
+                    # Extract all required information
+                    pickup_id = root.find('.//ns:ProcessedPickup/ns:ID', ns).text
+                    pickup_guid = root.find('.//ns:ProcessedPickup/ns:GUID', ns).text
+                    label_url = None  # Placeholder for label URL
                     
-                    # frappe.db.set_value(doc.doctype, doc.name, {
-                    #         "api_call_status": "Success",
-                    #         "api_payload": json.dumps(payload, indent=4),
-                    #         "api_response": formatted_xml,
-                    #         "awb_number": shipment_id,
-                    #         "label_url": label_url,
-                    #         "shipment_status": "Shipped"
-                    #     })
-                    # frappe.db.commit()
+                    # Update document fields using frappe.db.set_value
+                    frappe.db.set_value(doc.doctype, doc.name, {
+                        "pickup_api_call_status": "Success",
+                        "pickup_api_payload": json.dumps(payload, indent=4),
+                        "pickup_api_response": formatted_xml,
+                        "pickup_id": pickup_id
+                    })
+                    frappe.db.commit()
                     
-                    # doc.db_set("api_call_status", "Success")
-                    # doc.db_set("api_payload", json.dumps(payload, indent=4))
-                    # doc.db_set("api_response", formatted_xml)
-                    # doc.db_set("awb_number", shipment_id)
-                    # doc.db_set("label_url", label_url)
-                    # doc.db_set("shipment_status", "Shipped")
-                    frappe.logger().info(f"Aramex Shipment Success - AWB: {shipment_id}")
-
-                #return
-                #frappe.throw(f"Aramex returned error with non-JSON response: {response.text}")
+                    return {
+                        "success": True,
+                        "pickup_id": pickup_id,
+                        "pickup_guid": pickup_guid,
+                        "label_url": label_url
+                    }
             else:
+                # Handle JSON response (unlikely for SOAP API)
                 data = response.json()
-                call_status="Pending"
                 if data.get("HasErrors", True):
-                    call_status="Error"
-                    handle_errors(data, doc)
+                    frappe.db.set_value(doc.doctype, doc.name, {
+                        "pickup_api_call_status": "Error",
+                        "pickup_api_payload": json.dumps(payload, indent=4),
+                        "pickup_api_response": json.dumps(data, indent=4)
+                    })
+                    frappe.db.commit()
                 else:
-                    call_status="Success"
-                    update_shipment_details(data, doc)
-                doc.api_call_status=call_status
-                #doc.api_response=json.dumps(response_json, indent=4)
-                doc.api_payload=json.dumps(payload, indent=4)
-                doc.save() 
-                frappe.db.commit()
+                    frappe.db.set_value(doc.doctype, doc.name, {
+                        "pickup_api_call_status": "Success",
+                        "pickup_api_payload": json.dumps(payload, indent=4),
+                        "pickup_api_response": json.dumps(data, indent=4),
+                        "pickup_id": data.get("ID")
+                    })
+                    frappe.db.commit()
+                    
+                    return {
+                        "success": True,
+                        "pickup_id": data.get("ID"),
+                        "pickup_guid": data.get("GUID"),
+                        "label_url": data.get("LabelURL")
+                    }
         else:
-            doc.api_call_status="Error"
-            doc.api_response= str(e)
-            doc.save()
+            frappe.db.set_value(doc.doctype, doc.name, {
+                "pickup_api_call_status": "Error",
+                "pickup_api_response": response.text
+            })
             frappe.db.commit()
-            frappe.log_error(f"Aramex API Error: {str(e)}")
+            frappe.log_error(f"Aramex Pickup HTTP Error: {response.status_code} - {response.text}")
+            
     except Exception as e:
-        doc.api_call_status="Error"
-        doc.api_response= str(e)
-        doc.save()
+        frappe.db.set_value(doc.doctype, doc.name, {
+            "pickup_api_call_status": "Error",
+            "pickup_api_response": str(e)
+        })
         frappe.db.commit()
-        frappe.log_error(f"Aramex API Error: {str(e)}")
-        frappe.throw("Failed to connect to Aramex")
-        
-def update_shipment_details(response, doc):
-    shipment = response["Shipments"][0]
+        frappe.log_error(f"Aramex Pickup API Error: {str(e)}")
+        frappe.throw("Failed to connect to Aramex for pickup")
     
-    doc.update({
-        "awb_number": shipment["ID"],
-        "label_url": shipment["ShipmentLabel"]["LabelURL"],
-        "shipment_status": "Shipped"
-    })
-    doc.save()
-    frappe.db.commit()
+    return {
+        "success": False,
+        "message": "Failed to create pickup request"
+    }
     
-def handle_errors(response, doc):
-    errors = [f"{e['Code']}: {e['Message']}" for e in response["Notifications"]]
-    doc.db_set("shipment_status", "Failed")
-    frappe.log_error(f"Aramex Error: {json.dumps(errors)}", doc.name)
-    frappe.throw("<br>".join(errors))
+def get_pickup_label_url(pickup_id):
+    """Get pickup label using the correct endpoint"""
+    settings = frappe.get_cached_doc("Aramex Setting")
+    label_payload = {
+        "ClientInfo": {
+            "UserName": settings.user_name,
+            "Password": settings.get_password("password"),
+            "Version": settings.api_version,
+            "AccountNumber": settings.account_number,
+            "AccountPin": settings.account_pin,
+            "AccountEntity": settings.account_entity,
+            "AccountCountryCode": settings.account_country_code,
+            "Source": 24
+        },
+        "Transaction": {
+            "Reference1": f"LABEL-{pickup_id}",
+            "Reference2": "",
+            "Reference3": "",
+            "Reference4": "",
+            "Reference5": ""
+            
+        },
+        "ShipmentNumber": pickup_id,
+        "ProductGroup": "DOM",  # Use your product group
+        "OriginEntity": settings.account_entity,
+        "LabelInfo": {
+            "ReportID": 9201,
+            "ReportType": "URL"
+        }
+    }
     
+    url = settings.test_url if settings.mode == "Test" else settings.production_url
+    full_url = url + "/PrintLabel"  # Correct endpoint
+    
+    try:
+        response = requests.post(full_url, json=label_payload, timeout=30)
+        print(response.text)
+        if response.status_code == 200:
+            # Parse response same as shipment label
+            return extract_label_url(response.text)
+    except Exception as e:
+        frappe.log_error(f"Pickup label error: {str(e)}")
+    return None
+
+
+
+
+
  #*****************************************TRACKING********************************************************   
 
 @frappe.whitelist()

@@ -11,9 +11,9 @@ frappe.ui.form.on('Aramex Shipment', {
       if (frm.doc.docstatus === 1) {  // only if submitted
         //disable_form(frm);
         // Add "Request Pickup" button
-        frm.add_custom_button(__('Request Create Shipment'), () => {
+        frm.add_custom_button(__('Request Create Pickup'), () => {
           frappe.call({
-            method: 'aramex_connector.api.create_aramex_shipment_ws',  // your custom method aramex_connector.api.create_aramex_shipment
+            method: 'aramex_connector.api.create_aramex_shipment_with_pickup',  // your custom method aramex_connector.api.create_aramex_shipment
             args: {
               doc: frm.doc.name,
               method: 'on_submit'
@@ -21,7 +21,7 @@ frappe.ui.form.on('Aramex Shipment', {
             callback: function(r) {
               if (r.message) {
                 console.log(r);                
-                frappe.msgprint(__('Create Shipment requested successfully.'));
+                frappe.msgprint(__('Create Pickup requested successfully.'));
               }
             },
                 error: function(err) {

@@ -7,7 +7,7 @@ import frappe
 from frappe import _
 from frappe.contacts.doctype.address.address import get_address_display
 from erpnext.stock.doctype.delivery_trip.delivery_trip import get_contact_display
-from aramex_connector.api import create_aramex_shipment_ws
+from aramex_connector.api import create_aramex_shipment_with_pickup
 
 @frappe.whitelist()
 def test():
@@ -117,7 +117,8 @@ def get_company_contact(company_name):
 
 class AramexShipment(Document):
     def before_submit(self):
-        create_aramex_shipment_ws(self, "before_submit")
+        create_aramex_shipment_with_pickup(self, "before_submit")
+        
     def on_submit(self):
         self.shipment_status = 'shipped'
         self.update_sales_order_on_shipment_submit()
@@ -183,7 +184,7 @@ class AramexShipment(Document):
                         SET soi.custom_awb_number = %s, soi.custom_label_url = %s
                         WHERE soi.parent = %s
                         AND soi.item_code IN %s
-                    """, (self.awb_number, self.label_url, self.so_name, dn_items_map[so_name]))
+                    """, (self.awb_number, self.label_url, so_name, dn_items_map[so_name]))
                     
                     frappe.msgprint(_("Updated Sales Order {0} with AWB {1} for delivered items").format(
                         frappe.bold(so_name),
