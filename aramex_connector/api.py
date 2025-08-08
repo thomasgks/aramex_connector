@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 import html
 from zeep import Client
 from zeep.transports import Transport 
+from frappe.utils import getdate
 
 
 def test():
@@ -151,7 +152,10 @@ def create_aramex_shipment_ws_with_pickup(doc, method, pickup_guid):
                 },
                 "CashAdditionalAmount": None,
                 "CashAdditionalAmountDescription": "",
-                "CollectAmount": None,
+                "CollectAmount": None if doc.payment_state=="Prepaid" else { 
+                    "Value": doc.amount_to_collect, 
+                    "CurrencyCode": "SAR" 
+                },
                 "Services": "" if doc.payment_state=="Prepaid" else "CODS",
                 "Items": []
             }
@@ -466,7 +470,7 @@ def create_aramex_shipment_ws(doc, method):
                 "CashAdditionalAmountDescription": "",
                 "CashAdditionalAmount": None,
                 "CashAdditionalAmountDescription": "",
-                "CollectAmount": None,
+                "CollectAmount": None if doc.payment_state=="Prepaid" else { "Value": doc.amount_to_collect, "CurrencyCode": "SAR" },
                 "Services":  "" if doc.payment_state=="Prepaid" else "CODS",
                 "Items": []
             }
@@ -497,7 +501,11 @@ def create_pickup_ws(doc, method):
     return_contact = frappe.get_doc("Contact", doc.shipper_contact)
     
      # Prepare pickup date/time - typically next business day
-    pickup_date = datetime.now() + timedelta(days=1)
+    # Ensure shipment_date is a datetime object
+    if isinstance(doc.shipmet_date, datetime):
+        pickup_date = getdate(doc.shipmet_date )
+    else:
+        pickup_date = datetime.combine(getdate(doc.shipmet_date), datetime.min.time()) 
     ready_time = pickup_date.replace(hour=9, minute=0, second=0)  # 9 AM
     last_pickup_time = pickup_date.replace(hour=17, minute=0, second=0)  # 5 PM
     

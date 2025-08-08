@@ -163,11 +163,18 @@ class AramexShipment(Document):
                         "Sales Order",
                         so_name,
                         {
-                            "custom_awb_number": self.awb_number,
-                            "custom_ecommerce_status": "Return Process Started",
-                            "custom_label_url": self.label_url
+                            "custom_awb_number": self.awb_number,                            
+                            "custom_label_url": self.label_url,
+                            "custom_return_status":"Scheduled"
                         }
                     )
+                        # Update only the Sales Order items that are in this delivery note
+                        frappe.db.sql("""
+                            UPDATE `tabSales Order Item` soi
+                            SET soi.custom_return_status='Scheduled', soi.custom_awb_number = %s, soi.custom_label_url = %s
+                            WHERE soi.parent = %s
+                            AND soi.item_code IN %s
+                        """, (self.awb_number, self.label_url, so_name, dn_items_map[so_name]))
                     else:
                         frappe.db.set_value(
                         "Sales Order",
@@ -177,14 +184,15 @@ class AramexShipment(Document):
                             "custom_ecommerce_status": "Shipped"
                         }
                     )
+                        # Update only the Sales Order items that are in this delivery note
+                        frappe.db.sql("""
+                            UPDATE `tabSales Order Item` soi
+                            SET soi.custom_awb_number = %s, soi.custom_label_url = %s
+                            WHERE soi.parent = %s
+                            AND soi.item_code IN %s
+                        """, (self.awb_number, self.label_url, so_name, dn_items_map[so_name]))
                     
-                    # Update only the Sales Order items that are in this delivery note
-                    frappe.db.sql("""
-                        UPDATE `tabSales Order Item` soi
-                        SET soi.custom_awb_number = %s, soi.custom_label_url = %s
-                        WHERE soi.parent = %s
-                        AND soi.item_code IN %s
-                    """, (self.awb_number, self.label_url, so_name, dn_items_map[so_name]))
+                    
                     
                     frappe.msgprint(_("Updated Sales Order {0} with AWB {1} for delivered items").format(
                         frappe.bold(so_name),
@@ -224,27 +232,46 @@ class AramexShipment(Document):
                 # Process each sales order found in the delivery note
                 for so_name in sales_orders:
                     # Update Sales Order header
-                    frappe.db.set_value(
-                        "Sales Order",
-                        so_name,
-                        {
-                            "custom_awb_number": None,
-                            "custom_label_url": None,
-                            "custom_ecommerce_status": "Preparing for Shipment"
-                        }
-                    )
-                    
-                    # Clear AWB only for items that were in this delivery note
-                    frappe.db.sql("""
-                        UPDATE `tabSales Order Item` soi
-                        SET soi.custom_awb_number = NULL, soi.custom_label_url=NULL
-                        WHERE soi.parent = %s
-                        AND soi.item_code IN %s
-                    """, (so_name, dn_items_map[so_name]))
-                    
+                    if self.is_return:
+                        frappe.db.set_value(
+                            "Sales Order",
+                            so_name,
+                            {
+                                "custom_awb_number": None,
+                                "custom_label_url": None,
+                                "custom_return_status":"Return Requested"
+                            }
+                        )
+                        
+                        # Clear AWB only for items that were in this delivery note
+                        frappe.db.sql("""
+                            UPDATE `tabSales Order Item` soi
+                            SET soi.custom_return_status='Return Requested',soi.custom_awb_number = NULL, soi.custom_label_url=NULL
+                            WHERE soi.parent = %s
+                            AND soi.item_code IN %s
+                        """, (so_name, dn_items_map[so_name]))
+                    else:
+                        frappe.db.set_value(
+                            "Sales Order",
+                            so_name,
+                            {
+                                "custom_awb_number": None,
+                                "custom_label_url": None,
+                                "custom_ecommerce_status": "Preparing for Shipment"
+                                
+                            }
+                        )
+                        
+                        # Clear AWB only for items that were in this delivery note
+                        frappe.db.sql("""
+                            UPDATE `tabSales Order Item` soi
+                            SET soi.custom_return_status='Return Requested',soi.custom_awb_number = NULL, soi.custom_label_url=NULL
+                            WHERE soi.parent = %s
+                            AND soi.item_code IN %s
+                        """, (so_name, dn_items_map[so_name]))
                     frappe.msgprint(_("Cleared AWB from Sales Order {0} for cancelled items").format(
-                        frappe.bold(so_name)
-                    ))
+                            frappe.bold(so_name)
+                        ))
                     
             except Exception as e:
                 frappe.log_error(f"Failed to clear Sales Order items for DN {delivery_note_row.delivery_note}", str(e))
