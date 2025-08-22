@@ -68,6 +68,8 @@ def create_aramex_shipment_ws_with_pickup(doc, method, pickup_guid):
     """
     if isinstance(doc, str):
         doc = frappe.get_doc("Aramex Shipment", doc)
+    #else:
+    #    doc.reload()
        
     # Get the first item's Sales Order reference
     reference_no = doc.delivery_notes[0].sales_order if doc.delivery_notes and hasattr(doc.delivery_notes[0], "sales_order") else "Unknown"
@@ -83,8 +85,8 @@ def create_aramex_shipment_ws_with_pickup(doc, method, pickup_guid):
     shipper = None
     consignee = None
     if doc.is_return:
-        shipper = get_party_details(shipper_address.name, shipper_contact.name, reference_no, is_shipper=True, settings=settings)
-        consignee = get_party_details(consignee_address.name, consignee_contact.name, reference_no, is_shipper=False, settings=settings)
+        shipper = get_party_details(shipper_address.name, shipper_contact.name, reference_no, is_shipper=False, settings=settings)
+        consignee = get_party_details(consignee_address.name, consignee_contact.name, reference_no, is_shipper=True, settings=settings)
     else:
         shipper = get_party_details(shipper_address.name, shipper_contact.name, reference_no, is_shipper=True, settings=settings)
         consignee = get_party_details(consignee_address.name, consignee_contact.name, reference_no, is_shipper=False, settings=settings)
@@ -117,7 +119,7 @@ def create_aramex_shipment_ws_with_pickup(doc, method, pickup_guid):
             "Reference3": "",
             "Shipper": shipper,
             "Consignee": consignee,
-            "ThirdParty": None,
+            "ThirdParty": None if doc.is_return==0 else consignee,
             "ShippingDateTime": formatted_date,
             "DueDate": formatted_date,
             "Comments": "",
@@ -135,8 +137,8 @@ def create_aramex_shipment_ws_with_pickup(doc, method, pickup_guid):
                 "Dimensions": None,
                 "ChargeableWeight": None,
                 "ProductGroup": settings.default_product_group,
-                "ProductType": settings.default_product_type,
-                "PaymentType": "P",
+                "ProductType": settings.default_product_type if doc.is_return==0 else "RTC",
+                "PaymentType": "P" if doc.is_return==0 else "3",
                 "NumberOfPieces": doc.number_of_pieces,
                 "DescriptionOfGoods": doc.description_of_goods,
                 "GoodsOriginCountry": shipper["PartyAddress"]["CountryCode"],
@@ -161,7 +163,7 @@ def create_aramex_shipment_ws_with_pickup(doc, method, pickup_guid):
             }
         }],
         "LabelInfo": {
-            "ReportID": 9201,
+            "ReportID": 9729, #9201,
             "ReportType": "URL"
         }
     }
@@ -424,9 +426,8 @@ def create_aramex_shipment_ws(doc, method):
             "AccountCountryCode": settings.account_country_code,
             "Source": 24
         },
-        "Transaction": {"Reference1": reference_no,
+        "Transaction": {"Reference1": f"RETURN-{reference_no}" if doc.is_return else reference_no,
                         "Reference2": doc.name,
-                        "Reference3": "",
                         "Reference4": "",
                         "Reference5": ""},
         "Shipments": [{
@@ -476,7 +477,7 @@ def create_aramex_shipment_ws(doc, method):
             }
         }],
         "LabelInfo": {
-            "ReportID": 9201,
+            "ReportID": 9729, #9201,
             "ReportType": "URL"
         }
     }
@@ -527,14 +528,14 @@ def create_pickup_ws(doc, method):
             "Source": 24
         },
         "Transaction": {
-            "Reference1": f"RETURN-{reference_no}",
+            "Reference1": f"RETURN-{reference_no}" if doc.is_return else reference_no,
             "Reference2": doc.name,
             "Reference3": "",
             "Reference4": "",
             "Reference5": ""
         },
         "Pickup": {
-            "Reference1": f"RETURN-{reference_no}",
+            "Reference1": f"RETURN-{reference_no}" if doc.is_return else reference_no,
             "Reference2": "",
             "Comments": "Return pickup for order {reference_no}",  
             "Vehicle": "", 
@@ -593,7 +594,7 @@ def create_pickup_ws(doc, method):
             }]
         },
         "LabelInfo": {
-            "ReportID": 9201,
+            "ReportID": 9729, #9201,
             "ReportType": "URL"
         }
     }
@@ -604,11 +605,11 @@ def call_aramex_pickup_api(payload, doc):
     settings = frappe.get_cached_doc("Aramex Setting")
     url = settings.test_url if settings.mode == "Test" else settings.production_url
     full_url = url + "/CreatePickup"
-    
+
     print(f"Doc: {doc.name}")
     print(f"Aramex Request URL: {full_url}")
     print(f"Aramex Request Payload: {json.dumps(payload, indent=2)}")
-    
+
     try:
         response = requests.post(
             full_url,
@@ -616,11 +617,11 @@ def call_aramex_pickup_api(payload, doc):
             headers={"Content-Type": "application/json"},
             timeout=30
         )
-        
+
         if response.status_code == 200:
             if 'application/json' not in response.headers.get('Content-Type', ''):
                 xml_string = html.unescape(response.text)
-                
+
                 try:
                     parsed_xml = xml.dom.minidom.parseString(xml_string)
                     formatted_xml = parsed_xml.toprettyxml(indent="  ")
@@ -630,30 +631,65 @@ def call_aramex_pickup_api(payload, doc):
                 ns = {'ns': 'http://ws.aramex.net/ShippingAPI/v1/'}
                 root = ET.fromstring(xml_string)
                 has_errors = root.find('.//ns:HasErrors', ns).text
-                
+
                 if has_errors == "true":
-                    frappe.db.set_value(doc.doctype, doc.name, {
-                        "pickup_api_call_status": "Error",
-                        "pickup_api_payload": json.dumps(payload, indent=4),
-                        "pickup_api_response": formatted_xml
-                    })
-                    frappe.db.commit()
-                    frappe.log_error(f"Aramex Pickup Error: {formatted_xml}")
+                    notification = root.find('.//ns:Notifications/ns:Notification', ns)
+                    error_code = notification.find('.//ns:Code', ns).text if notification is not None else None
+                    notification_message = notification.find('.//ns:Message', ns).text if notification is not None else None
+
+                    if error_code == "ERR83":
+                        update_fields = {
+                            "pickup_api_call_status": "Success",
+                            "pickup_api_payload": json.dumps(payload, indent=4),
+                            "pickup_api_response": formatted_xml,
+                            "pickup_id": None,
+                            "remarks": notification_message
+                        }
+                        frappe.db.set_value(doc.doctype, doc.name, update_fields)
+                        frappe.db.commit()
+
+                        frappe.publish_realtime('doc_update', {
+                            'doc': update_fields,
+                            'doctype': doc.doctype,
+                            'name': doc.name
+                        })
+
+                        return {
+                            "success": True,
+                            "pickup_id": None,
+                            "pickup_guid": "00000000-0000-0000-0000-000000000000",
+                            "message": notification_message,
+                            "is_warning": True
+                        }
+                    else:
+                        update_fields = {
+                            "pickup_api_call_status": "Error",
+                            "pickup_api_payload": json.dumps(payload, indent=4),
+                            "pickup_api_response": formatted_xml
+                        }
+                        frappe.db.set_value(doc.doctype, doc.name, update_fields)
+                        frappe.db.commit()
+                        frappe.log_error(f"Aramex Pickup Error: {formatted_xml}")
                 else:
-                    # Extract all required information
                     pickup_id = root.find('.//ns:ProcessedPickup/ns:ID', ns).text
                     pickup_guid = root.find('.//ns:ProcessedPickup/ns:GUID', ns).text
-                    label_url = None  # Placeholder for label URL
-                    
-                    # Update document fields using frappe.db.set_value
-                    frappe.db.set_value(doc.doctype, doc.name, {
+                    label_url = None
+
+                    update_fields = {
                         "pickup_api_call_status": "Success",
                         "pickup_api_payload": json.dumps(payload, indent=4),
                         "pickup_api_response": formatted_xml,
                         "pickup_id": pickup_id
-                    })
+                    }
+                    frappe.db.set_value(doc.doctype, doc.name, update_fields)
                     frappe.db.commit()
-                    
+
+                    frappe.publish_realtime('doc_update', {
+                        'doc': update_fields,
+                        'doctype': doc.doctype,
+                        'name': doc.name
+                    })
+
                     return {
                         "success": True,
                         "pickup_id": pickup_id,
@@ -661,24 +697,31 @@ def call_aramex_pickup_api(payload, doc):
                         "label_url": label_url
                     }
             else:
-                # Handle JSON response (unlikely for SOAP API)
                 data = response.json()
                 if data.get("HasErrors", True):
-                    frappe.db.set_value(doc.doctype, doc.name, {
+                    update_fields = {
                         "pickup_api_call_status": "Error",
                         "pickup_api_payload": json.dumps(payload, indent=4),
                         "pickup_api_response": json.dumps(data, indent=4)
-                    })
+                    }
+                    frappe.db.set_value(doc.doctype, doc.name, update_fields)
                     frappe.db.commit()
                 else:
-                    frappe.db.set_value(doc.doctype, doc.name, {
+                    update_fields = {
                         "pickup_api_call_status": "Success",
                         "pickup_api_payload": json.dumps(payload, indent=4),
                         "pickup_api_response": json.dumps(data, indent=4),
                         "pickup_id": data.get("ID")
-                    })
+                    }
+                    frappe.db.set_value(doc.doctype, doc.name, update_fields)
                     frappe.db.commit()
-                    
+
+                    frappe.publish_realtime('doc_update', {
+                        'doc': update_fields,
+                        'doctype': doc.doctype,
+                        'name': doc.name
+                    })
+
                     return {
                         "success": True,
                         "pickup_id": data.get("ID"),
@@ -686,26 +729,29 @@ def call_aramex_pickup_api(payload, doc):
                         "label_url": data.get("LabelURL")
                     }
         else:
-            frappe.db.set_value(doc.doctype, doc.name, {
+            update_fields = {
                 "pickup_api_call_status": "Error",
                 "pickup_api_response": response.text
-            })
+            }
+            frappe.db.set_value(doc.doctype, doc.name, update_fields)
             frappe.db.commit()
             frappe.log_error(f"Aramex Pickup HTTP Error: {response.status_code} - {response.text}")
-            
+
     except Exception as e:
-        frappe.db.set_value(doc.doctype, doc.name, {
+        update_fields = {
             "pickup_api_call_status": "Error",
             "pickup_api_response": str(e)
-        })
+        }
+        frappe.db.set_value(doc.doctype, doc.name, update_fields)
         frappe.db.commit()
         frappe.log_error(f"Aramex Pickup API Error: {str(e)}")
         frappe.throw("Failed to connect to Aramex for pickup")
-    
+
     return {
         "success": False,
         "message": "Failed to create pickup request"
     }
+
     
 def get_pickup_label_url(pickup_id):
     """Get pickup label using the correct endpoint"""

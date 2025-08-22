@@ -44,6 +44,7 @@
   "section_break_abnp",
   "shipmet_date",
   "is_return",
+  "remarks",
   "column_break_jjox",
   "awb_number",
   "pickup_id",
@@ -353,13 +354,18 @@
    "fieldname": "pickup_api_payload",
    "fieldtype": "JSON",
    "label": "Pickup Api Payload"
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2025-08-02 01:25:26.813839",
+ "modified": "2025-08-13 15:48:00.894030",
  "modified_by": "Administrator",
  "module": "Aramex Connector",
  "name": "Aramex Shipment",
