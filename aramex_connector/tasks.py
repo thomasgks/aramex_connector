@@ -5,12 +5,8 @@ import frappe
 from frappe.utils import now_datetime, today
 from aramex_connector.api import call_aramex_tracking_api
 
-# Aramex returns full codes like SH369, DL001, SC123 etc.
-# We match by prefix (first 2-3 chars) in priority order.
-# Order matters — check longer prefixes first (RTO before RN).
-
+# Aramex returns full codes like SH369, DL001 — match by prefix
 CODE_PREFIX_MAP = [
-    # Forward deliveries
     ("DL",  "Delivered"),
     ("OK",  "Delivered"),
     ("RTO", "Cancelled"),
@@ -18,15 +14,14 @@ CODE_PREFIX_MAP = [
     ("CA",  "Cancelled"),
     ("RN",  "Cancelled"),
     ("SH",  "Shipped"),
+    ("SS",  "Shipped"),
     ("OD",  "Shipped"),
     ("IT",  "Shipped"),
+    ("OF",  "Shipped"),
     ("SC",  "Scheduled"),
     ("PU",  "Scheduled"),
-    ("SS",  "Shipped"),   # SMS Sent to Consignee — in transit
-    ("OF",  "Shipped"),   # Out for delivery variants
 ]
 
-# Same prefix map for returns — only PU means terminal "Delivered"
 RETURN_PREFIX_MAP = [
     ("DL",  "Delivered"),
     ("OK",  "Delivered"),
@@ -36,15 +31,20 @@ RETURN_PREFIX_MAP = [
     ("CA",  "Cancelled"),
     ("RN",  "Cancelled"),
     ("SH",  "Shipped"),
+    ("SS",  "Shipped"),
     ("IT",  "Shipped"),
     ("SC",  "Scheduled"),
-    ("SS",  "Shipped"),
     ("OF",  "Shipped"),
 ]
 
 TERMINAL_STATUSES = {"Delivered", "Cancelled"}
 SKIP_STATUSES     = {"Draft"}
 BATCH_SIZE        = 20
+
+# Max shipments to process per hourly run
+# 100 shipments = 5 API batches, well within the 5 min timeout
+# All 1703 will be cycled through in ~17 hourly runs (~17 hours)
+PER_RUN_LIMIT     = 100
 
 
 def _map_code(update_code, is_return):
@@ -79,15 +79,16 @@ def debug_tracker():
             "awb_number": ["!=", ""],
             "shipment_status": ["not in", list(TERMINAL_STATUSES) + list(SKIP_STATUSES)],
         },
-        fields=["name", "awb_number", "shipment_status", "is_return"],
+        fields=["name", "awb_number", "shipment_status", "is_return", "custom_last_checked"],
+        order_by="custom_last_checked asc",
+        limit=PER_RUN_LIMIT,
     )
-    out(f"Active shipments to poll: {len(shipments)}")
+    out(f"Active shipments to poll (this run): {len(shipments)} of {PER_RUN_LIMIT} max")
 
     if not shipments:
         out("Nothing to poll.")
         return "\n".join(lines)
 
-    # Test first 3 AWBs
     test_awbs = [s["awb_number"] for s in shipments[:3]]
     out(f"\nTesting API with AWBs: {test_awbs}")
 
@@ -117,8 +118,11 @@ def debug_tracker():
 
 
 def update_aramex_shipment_statuses():
-    """Hourly scheduled task."""
-
+    """
+    Hourly scheduled task.
+    Processes up to PER_RUN_LIMIT shipments per run, ordered by
+    oldest-checked-first so all shipments are cycled through over time.
+    """
     log_doctype_exists = frappe.db.exists("DocType", "Aramex Tracking Log")
     log = None
     if log_doctype_exists:
@@ -130,6 +134,7 @@ def update_aramex_shipment_statuses():
         log.total_cancelled = 0
         log.status          = "Success"
 
+    # Fetch oldest-checked-first so every shipment gets polled over time
     shipments = frappe.get_all(
         "Aramex Shipment",
         filters={
@@ -137,7 +142,9 @@ def update_aramex_shipment_statuses():
             "awb_number": ["!=", ""],
             "shipment_status": ["not in", list(TERMINAL_STATUSES) + list(SKIP_STATUSES)],
         },
-        fields=["name", "awb_number", "shipment_status", "is_return"],
+        fields=["name", "awb_number", "shipment_status", "is_return", "custom_last_checked"],
+        order_by="custom_last_checked asc",
+        limit=PER_RUN_LIMIT,
     )
 
     if not shipments:
@@ -171,10 +178,13 @@ def update_aramex_shipment_statuses():
                 n.get("message", "") for n in (result.get("notifications") or [])
             ) or "No tracking results returned"
             frappe.log_error(title="Aramex Tracker — No results", message=msg)
-            if log:
-                for awb in batch:
-                    sm = awb_to_shipment.get(awb)
-                    if sm:
+            # Still stamp last_checked so these AWBs move to back of queue
+            for awb in batch:
+                sm = awb_to_shipment.get(awb)
+                if sm:
+                    frappe.db.set_value("Aramex Shipment", sm["name"],
+                        {"custom_last_checked": now_datetime()})
+                    if log:
                         log.append("results", {
                             "shipment": sm["name"], "awb_number": awb,
                             "is_return": sm["is_return"],
@@ -198,6 +208,15 @@ def update_aramex_shipment_statuses():
                 if row.get("new_status") == "Cancelled":
                     log.total_cancelled += 1
 
+        # Stamp last_checked for AWBs not returned by API (no change)
+        returned_awbs = set(result["tracking_results"].keys())
+        for awb in batch:
+            if awb not in returned_awbs:
+                sm = awb_to_shipment.get(awb)
+                if sm:
+                    frappe.db.set_value("Aramex Shipment", sm["name"],
+                        {"custom_last_checked": now_datetime()})
+
     if api_failed and log:
         log.status = "Partial" if log.total_updated > 0 else "Failed"
 
@@ -206,7 +225,19 @@ def update_aramex_shipment_statuses():
             log.insert(ignore_permissions=True)
             frappe.db.commit()
         except Exception:
-            frappe.log_error(title="Aramex Tracker — Log save failed", message=frappe.get_traceback())
+            frappe.log_error(
+                title="Aramex Tracker — Log save failed",
+                message=frappe.get_traceback()
+            )
+            try:
+                log.set("results", [])
+                log.insert(ignore_permissions=True)
+                frappe.db.commit()
+            except Exception:
+                frappe.log_error(
+                    title="Aramex Tracker — Log save failed (no results)",
+                    message=frappe.get_traceback()
+                )
 
 
 def _process_and_build_row(shipment_meta, updates):
@@ -292,7 +323,8 @@ def _handle_delivered(doc_name, is_return):
     for so_name in _get_linked_sales_orders(doc_name):
         try:
             if is_return:
-                frappe.db.set_value("Sales Order", so_name, {"custom_return_status": "Return Collected"})
+                frappe.db.set_value("Sales Order", so_name,
+                    {"custom_return_status": "Return Collected"})
             else:
                 frappe.db.set_value("Sales Order", so_name,
                     {"delivery_date": today(), "custom_ecommerce_status": "Delivered"})
@@ -310,9 +342,11 @@ def _handle_cancelled(doc_name, is_return):
     for so_name in _get_linked_sales_orders(doc_name):
         try:
             if is_return:
-                frappe.db.set_value("Sales Order", so_name, {"custom_return_status": "Return Cancelled"})
+                frappe.db.set_value("Sales Order", so_name,
+                    {"custom_return_status": "Return Cancelled"})
             else:
-                frappe.db.set_value("Sales Order", so_name, {"custom_ecommerce_status": "Cancelled"})
+                frappe.db.set_value("Sales Order", so_name,
+                    {"custom_ecommerce_status": "Cancelled"})
             updated.append(so_name)
         except Exception:
             frappe.log_error(
