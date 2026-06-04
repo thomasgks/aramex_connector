@@ -297,7 +297,24 @@
    "fieldname": "shipment_status",
    "fieldtype": "Select",
    "label": "Shipment Status",
-   "options": "Draft\nShipped\nDelivered\nCancelled\nScheduled"
+   "options": "Draft\nShipped\nDelivered\nCancelled\nScheduled",
+   "default": "Draft"
+  },
+  {
+   "fieldname": "custom_last_checked",
+   "fieldtype": "Datetime",
+   "label": "Last Checked",
+   "read_only": 1,
+   "no_copy": 1,
+   "in_list_view": 0
+  },
+  {
+   "fieldname": "cancellation_reason",
+   "fieldtype": "Small Text",
+   "label": "Cancellation Reason",
+   "read_only": 1,
+   "no_copy": 1,
+   "depends_on": "eval:doc.shipment_status=='Cancelled'"
   },
   {
    "fieldname": "integration_info_tab",
