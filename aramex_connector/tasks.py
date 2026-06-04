@@ -5,123 +5,114 @@ import frappe
 from frappe.utils import now_datetime, today
 from aramex_connector.api import call_aramex_tracking_api
 
-FORWARD_CODE_MAP = {
-    "SH":  "Shipped",
-    "OD":  "Shipped",
-    "IT":  "Shipped",
-    "DL":  "Delivered",
-    "OK":  "Delivered",
-    "CL":  "Cancelled",
-    "CA":  "Cancelled",
-    "RN":  "Cancelled",
-    "RTO": "Cancelled",
-    "SC":  "Scheduled",
-    "PU":  "Scheduled",
-}
+# Aramex returns full codes like SH369, DL001, SC123 etc.
+# We match by prefix (first 2-3 chars) in priority order.
+# Order matters — check longer prefixes first (RTO before RN).
 
-RETURN_CODE_MAP = {
-    "SC":  "Scheduled",
-    "PU":  "Delivered",
-    "SH":  "Shipped",
-    "IT":  "Shipped",
-    "DL":  "Delivered",
-    "OK":  "Delivered",
-    "CL":  "Cancelled",
-    "CA":  "Cancelled",
-    "RN":  "Cancelled",
-}
+CODE_PREFIX_MAP = [
+    # Forward deliveries
+    ("DL",  "Delivered"),
+    ("OK",  "Delivered"),
+    ("RTO", "Cancelled"),
+    ("CL",  "Cancelled"),
+    ("CA",  "Cancelled"),
+    ("RN",  "Cancelled"),
+    ("SH",  "Shipped"),
+    ("OD",  "Shipped"),
+    ("IT",  "Shipped"),
+    ("SC",  "Scheduled"),
+    ("PU",  "Scheduled"),
+    ("SS",  "Shipped"),   # SMS Sent to Consignee — in transit
+    ("OF",  "Shipped"),   # Out for delivery variants
+]
+
+# Same prefix map for returns — only PU means terminal "Delivered"
+RETURN_PREFIX_MAP = [
+    ("DL",  "Delivered"),
+    ("OK",  "Delivered"),
+    ("PU",  "Delivered"),   # Picked Up from customer = terminal for returns
+    ("RTO", "Cancelled"),
+    ("CL",  "Cancelled"),
+    ("CA",  "Cancelled"),
+    ("RN",  "Cancelled"),
+    ("SH",  "Shipped"),
+    ("IT",  "Shipped"),
+    ("SC",  "Scheduled"),
+    ("SS",  "Shipped"),
+    ("OF",  "Shipped"),
+]
 
 TERMINAL_STATUSES = {"Delivered", "Cancelled"}
 SKIP_STATUSES     = {"Draft"}
 BATCH_SIZE        = 20
 
 
+def _map_code(update_code, is_return):
+    """Match Aramex full code (e.g. SH369) by prefix."""
+    code = update_code.upper().strip()
+    prefix_map = RETURN_PREFIX_MAP if is_return else CODE_PREFIX_MAP
+    for prefix, status in prefix_map:
+        if code.startswith(prefix):
+            return status
+    return None
+
+
 @frappe.whitelist()
 def debug_tracker():
     """
-    Diagnostic method — call from browser:
+    Diagnostic — open in browser:
     /api/method/aramex_connector.tasks.debug_tracker
-    Returns a full diagnostic log as plain text.
     """
     lines = []
-    log = lines.append
+    out = lines.append
 
-    log("=== ARAMEX TRACKER DIAGNOSTIC ===")
-    log(f"Time: {now_datetime()}")
+    out("=== ARAMEX TRACKER DIAGNOSTIC ===")
+    out(f"Time: {now_datetime()}")
 
-    # 1. Doctype check
     log_exists = frappe.db.exists("DocType", "Aramex Tracking Log")
-    log(f"Aramex Tracking Log doctype exists: {log_exists}")
+    out(f"Aramex Tracking Log doctype exists: {log_exists}")
 
-    # 2. Shipments query
-    try:
-        all_submitted = frappe.get_all(
-            "Aramex Shipment",
-            filters={"docstatus": 1},
-            fields=["name", "awb_number", "shipment_status"],
-            limit=5
-        )
-        log(f"Total submitted shipments (sample of 5): {len(all_submitted)}")
-        for s in all_submitted:
-            log(f"  {s['name']} | AWB: {s['awb_number']} | Status: {s['shipment_status']}")
-    except Exception as e:
-        log(f"ERROR querying submitted shipments: {e}")
-
-    try:
-        shipments = frappe.get_all(
-            "Aramex Shipment",
-            filters={
-                "docstatus": 1,
-                "awb_number": ["!=", ""],
-                "shipment_status": ["not in", list(TERMINAL_STATUSES) + list(SKIP_STATUSES)],
-            },
-            fields=["name", "awb_number", "shipment_status", "is_return"],
-        )
-        log(f"Active shipments to poll: {len(shipments)}")
-        for s in shipments[:10]:
-            log(f"  {s['name']} | AWB: {s['awb_number']} | Status: {s['shipment_status']} | Return: {bool(s['is_return'])}")
-        if len(shipments) > 10:
-            log(f"  ... and {len(shipments)-10} more")
-    except Exception as e:
-        log(f"ERROR querying active shipments: {e}")
-        return "\n".join(lines)
+    shipments = frappe.get_all(
+        "Aramex Shipment",
+        filters={
+            "docstatus": 1,
+            "awb_number": ["!=", ""],
+            "shipment_status": ["not in", list(TERMINAL_STATUSES) + list(SKIP_STATUSES)],
+        },
+        fields=["name", "awb_number", "shipment_status", "is_return"],
+    )
+    out(f"Active shipments to poll: {len(shipments)}")
 
     if not shipments:
-        log("NO ACTIVE SHIPMENTS FOUND — checking why...")
-        status_counts = frappe.db.sql("""
-            SELECT shipment_status, docstatus, COUNT(*) as cnt
-            FROM `tabAramex Shipment`
-            GROUP BY shipment_status, docstatus
-            ORDER BY cnt DESC
-        """, as_dict=True)
-        for row in status_counts:
-            log(f"  status={row.shipment_status} | docstatus={row.docstatus} | count={row.cnt}")
+        out("Nothing to poll.")
         return "\n".join(lines)
 
-    # 3. Test API call with first AWB only
-    test_awb = shipments[0]["awb_number"]
-    log(f"\nTesting API with first AWB: {test_awb}")
-    try:
-        result = call_aramex_tracking_api([test_awb], get_last_update_only=True)
-        log(f"API has_errors: {result.get('has_errors')}")
-        log(f"API notifications: {result.get('notifications')}")
-        tracking = result.get("tracking_results", {})
-        log(f"Tracking result AWBs returned: {list(tracking.keys())}")
-        if tracking:
-            for awb, updates in tracking.items():
-                log(f"  AWB {awb}: {len(updates)} update(s)")
-                if updates:
-                    u = updates[0]
-                    log(f"    code={u.get('update_code')} | desc={u.get('update_description')} | location={u.get('update_location')} | time={u.get('update_datetime')}")
-        else:
-            log("  No tracking data returned for this AWB")
-            log(f"  Full API result: {result}")
-    except Exception as e:
-        log(f"ERROR calling Aramex API: {e}")
-        import traceback
-        log(traceback.format_exc())
+    # Test first 3 AWBs
+    test_awbs = [s["awb_number"] for s in shipments[:3]]
+    out(f"\nTesting API with AWBs: {test_awbs}")
 
-    log("\n=== END DIAGNOSTIC ===")
+    try:
+        result = call_aramex_tracking_api(test_awbs, get_last_update_only=True)
+        out(f"API has_errors: {result.get('has_errors')}")
+        tracking = result.get("tracking_results", {})
+        out(f"AWBs returned: {list(tracking.keys())}")
+
+        for awb, updates in tracking.items():
+            sm = next((s for s in shipments if s["awb_number"] == awb), None)
+            is_return = bool(sm.get("is_return")) if sm else False
+            out(f"\n  AWB {awb}:")
+            if updates:
+                u = updates[0]
+                code = (u.get("update_code") or "").upper()
+                mapped = _map_code(code, is_return)
+                out(f"    raw_code   = {code}")
+                out(f"    description= {u.get('update_description')}")
+                out(f"    location   = {u.get('update_location')}")
+                out(f"    mapped_to  = {mapped or 'UNKNOWN — not in map'}")
+    except Exception:
+        out(f"API ERROR: {frappe.get_traceback()}")
+
+    out("\n=== END DIAGNOSTIC ===")
     return "\n".join(lines)
 
 
@@ -129,7 +120,6 @@ def update_aramex_shipment_statuses():
     """Hourly scheduled task."""
 
     log_doctype_exists = frappe.db.exists("DocType", "Aramex Tracking Log")
-
     log = None
     if log_doctype_exists:
         log = frappe.new_doc("Aramex Tracking Log")
@@ -222,33 +212,32 @@ def update_aramex_shipment_statuses():
 def _process_and_build_row(shipment_meta, updates):
     doc_name  = shipment_meta["name"]
     is_return = bool(shipment_meta.get("is_return"))
-    code_map  = RETURN_CODE_MAP if is_return else FORWARD_CODE_MAP
 
     latest      = updates[0]
     update_code = (latest.get("update_code") or "").upper()
     description = latest.get("update_description") or ""
     comments    = latest.get("comments") or ""
     location    = latest.get("update_location") or ""
-    new_status  = code_map.get(update_code)
+    new_status  = _map_code(update_code, is_return)
     prev_status = shipment_meta["shipment_status"]
 
     row = {
-        "shipment":           doc_name,
-        "awb_number":         shipment_meta["awb_number"],
-        "is_return":          is_return,
-        "previous_status":    prev_status,
-        "new_status":         new_status or "",
-        "update_code":        update_code,
-        "update_description": description + (f" ({location})" if location else ""),
+        "shipment":             doc_name,
+        "awb_number":           shipment_meta["awb_number"],
+        "is_return":            is_return,
+        "previous_status":      prev_status,
+        "new_status":           new_status or "",
+        "update_code":          update_code,
+        "update_description":   description + (f" ({location})" if location else ""),
         "sales_orders_updated": "",
         "cancellation_reason":  "",
-        "remarks":            ""
+        "remarks":              ""
     }
 
     update_values = {"custom_last_checked": now_datetime()}
 
     if not new_status:
-        row["remarks"] = f"Unknown Aramex code: '{update_code}'"
+        row["remarks"] = f"Unknown code: '{update_code}'"
         frappe.db.set_value("Aramex Shipment", doc_name, update_values)
         return row
 
