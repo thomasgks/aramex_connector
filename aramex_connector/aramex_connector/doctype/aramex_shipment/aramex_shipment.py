@@ -29,6 +29,17 @@ def create_aramex_shipment(delivery_note):
     
     dn = frappe.get_doc("Delivery Note", delivery_note)
 
+    # Block Aramex shipment creation if the linked Sales Order is a store pickup
+    so_name = dn.items[0].against_sales_order if dn.items else None
+    if so_name and frappe.db.exists("Sales Order", so_name):
+        is_store_pickup = frappe.db.get_value("Sales Order", so_name, "custom_is_store_pickup")
+        if is_store_pickup:
+            frappe.throw(
+                _("Cannot create Aramex Shipment for Sales Order {0} — this order is marked as Store Pickup.").format(
+                    frappe.bold(so_name)
+                )
+            )
+
     shipment = frappe.new_doc("Aramex Shipment")
     shipment.is_return=dn.is_return
     if dn.is_return==0:

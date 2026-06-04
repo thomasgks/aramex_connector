@@ -1,0 +1,138 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:ARMX-LOG-{YY}-{MM}-{DD}-{#####}",
+ "creation": "2025-08-22 10:00:00",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "run_summary_section",
+  "executed_at",
+  "col1",
+  "total_checked",
+  "total_updated",
+  "col2",
+  "total_delivered",
+  "total_cancelled",
+  "col3",
+  "status",
+  "error_message",
+  "shipment_results_section",
+  "results"
+ ],
+ "fields": [
+  {
+   "fieldname": "run_summary_section",
+   "fieldtype": "Section Break",
+   "label": "Run Summary"
+  },
+  {
+   "fieldname": "executed_at",
+   "fieldtype": "Datetime",
+   "label": "Executed At",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "col1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_checked",
+   "fieldtype": "Int",
+   "label": "Total Checked",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "total_updated",
+   "fieldtype": "Int",
+   "label": "Total Updated",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "col2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_delivered",
+   "fieldtype": "Int",
+   "label": "Delivered",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "total_cancelled",
+   "fieldtype": "Int",
+   "label": "Cancelled",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "col3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Run Status",
+   "options": "Success\nPartial\nFailed\nNo Active Shipments",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "error_message",
+   "fieldtype": "Small Text",
+   "label": "Error Message",
+   "read_only": 1,
+   "depends_on": "eval:doc.status=='Failed'"
+  },
+  {
+   "fieldname": "shipment_results_section",
+   "fieldtype": "Section Break",
+   "label": "Shipment Results"
+  },
+  {
+   "fieldname": "results",
+   "fieldtype": "Table",
+   "label": "Results",
+   "options": "Aramex Tracking Log Result",
+   "read_only": 1
+  }
+ ],
+ "in_create": 0,
+ "is_submittable": 0,
+ "modified": "2025-08-22 10:00:00",
+ "modified_by": "Administrator",
+ "module": "Aramex Connector",
+ "name": "Aramex Tracking Log",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "export": 1,
+   "role": "Logistics User"
+  }
+ ],
+ "sort_field": "executed_at",
+ "sort_order": "DESC",
+ "track_changes": 0
+}

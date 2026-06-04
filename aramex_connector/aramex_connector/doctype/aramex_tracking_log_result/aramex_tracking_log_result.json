@@ -1,0 +1,121 @@
+{
+ "actions": [],
+ "creation": "2025-08-22 10:00:00",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "shipment",
+  "awb_number",
+  "is_return",
+  "col1",
+  "previous_status",
+  "new_status",
+  "col2",
+  "update_code",
+  "update_description",
+  "col3",
+  "sales_orders_updated",
+  "cancellation_reason",
+  "remarks"
+ ],
+ "fields": [
+  {
+   "fieldname": "shipment",
+   "fieldtype": "Link",
+   "label": "Shipment",
+   "options": "Aramex Shipment",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "awb_number",
+   "fieldtype": "Data",
+   "label": "AWB Number",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "is_return",
+   "fieldtype": "Check",
+   "label": "Return",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "col1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "previous_status",
+   "fieldtype": "Data",
+   "label": "Previous Status",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "new_status",
+   "fieldtype": "Data",
+   "label": "New Status",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "col2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "update_code",
+   "fieldtype": "Data",
+   "label": "Aramex Code",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "update_description",
+   "fieldtype": "Data",
+   "label": "Description",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "col3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sales_orders_updated",
+   "fieldtype": "Small Text",
+   "label": "Sales Orders Updated",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cancellation_reason",
+   "fieldtype": "Small Text",
+   "label": "Cancellation Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "modified": "2025-08-22 10:00:00",
+ "modified_by": "Administrator",
+ "module": "Aramex Connector",
+ "name": "Aramex Tracking Log Result",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 0
+}
