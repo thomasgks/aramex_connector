@@ -27,7 +27,7 @@ CHUNK_SIZE          = 500    # shipments per background job
 TRACKING_DAYS_LIMIT = 90
 
 # ── Description-based keyword detection (PRIMARY — most reliable) ────────────
-DELIVERED_KEYWORDS   = ["delivered", "delivery completed"]
+DELIVERED_KEYWORDS   = ["delivered", "delivery completed", "collected by consignee"]
 CANCELLED_KEYWORDS   = ["cancelled", "canceled", "return to shipper", "rts",
                          "undelivered - return", "shipment cancelled"]
 PICKED_UP_KEYWORDS   = ["picked up from shipper", "pickup completed"]
