@@ -43,20 +43,25 @@
   "amount_to_collect",
   "section_break_abnp",
   "shipmet_date",
-  "is_return",
-  "remarks",
   "column_break_jjox",
   "awb_number",
-  "pickup_id",
   "label_url",
   "shipment_status",
+  "delivery_datetime",
+  "tracking_status_section",
+  "last_status_description",
+  "custom_last_checked",
+  "cancellation_reason",
   "integration_info_tab",
   "api_call_status",
-  "pickup_api_call_status",
   "api_response",
-  "pickup_api_response",
   "api_payload",
-  "pickup_api_payload"
+  "is_return",
+  "pickup_id",
+  "pickup_api_call_status",
+  "pickup_api_response",
+  "pickup_api_payload",
+  "remarks"
  ],
  "fields": [
   {
@@ -308,6 +313,11 @@
    "no_copy": 1,
    "depends_on": "eval:doc.shipment_status=='Delivered'",
    "description": "Actual delivery date/time as reported by Aramex"
+  },
+  {
+   "fieldname": "tracking_status_section",
+   "fieldtype": "Section Break",
+   "label": "Tracking Status"
   },
   {
    "fieldname": "last_status_description",
