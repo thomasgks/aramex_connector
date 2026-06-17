@@ -10,7 +10,7 @@ app_include_css = ["public/css/aramex_shipment.css"]
 
 scheduler_events = {
     "hourly": [
-        "aramex_connector.tasks.update_aramex_shipment_statuses"
+        "aramex_connector.tasks.queue_aramex_status_update_jobs"
     ],
 }
 
@@ -22,6 +22,7 @@ fixtures = [
             "Sales Order-custom_awb_number",
             "Sales Order-custom_label_url",
             "Sales Order Item-custom_label_url",
+            "Sales Order-custom_delivery_time",
         )]]
     }
 ]
