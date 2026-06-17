@@ -17,7 +17,10 @@
   "col3",
   "sales_orders_updated",
   "cancellation_reason",
-  "remarks"
+  "remarks",
+  "raw_api_log_section",
+  "execution_steps",
+  "raw_api_response"
  ],
  "fields": [
   {
@@ -106,6 +109,26 @@
    "fieldtype": "Small Text",
    "label": "Remarks",
    "read_only": 1
+  },
+  {
+   "fieldname": "raw_api_log_section",
+   "fieldtype": "Section Break",
+   "label": "Raw API Log",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "execution_steps",
+   "fieldtype": "Code",
+   "label": "Execution Steps",
+   "read_only": 1,
+   "options": "Text"
+  },
+  {
+   "fieldname": "raw_api_response",
+   "fieldtype": "Code",
+   "label": "Raw API Response (All Tracking Updates)",
+   "read_only": 1,
+   "options": "JSON"
   }
  ],
  "istable": 1,
