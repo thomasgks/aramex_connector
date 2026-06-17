@@ -325,7 +325,7 @@
    "label": "Last Status Description",
    "read_only": 1,
    "no_copy": 1,
-   "description": "Raw update_description from Aramex at last check (e.g. 'Out for Delivery')"
+   "description": "Status update from Aramex at the last check"
   },
   {
    "fieldname": "custom_last_checked",
