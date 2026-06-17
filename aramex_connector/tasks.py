@@ -141,13 +141,18 @@ def recheck_all_shipment_statuses():
     # records that may have the wrong delivery_date/custom_delivery_time
     # written by the previous buggy version. Cancelled and Draft are still
     # excluded since they have no delivery data to correct.
+    #
+    # Also DELIBERATELY skips the TRACKING_DAYS_LIMIT/_get_cutoff() filter
+    # used by the hourly flow — that filter exists only to avoid wasting API
+    # calls on ancient AWBs Aramex no longer tracks, but this is a one-time
+    # data-correction pass and must cover every affected record regardless
+    # of age.
     shipments = frappe.get_all(
         "Aramex Shipment",
         filters={
             "docstatus": 1,
             "awb_number": ["!=", ""],
             "shipment_status": ["not in", ["Cancelled", "Draft"]],
-            "creation": [">=", _get_cutoff()],
         },
         pluck="name",
     )
