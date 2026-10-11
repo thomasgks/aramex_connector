@@ -17,7 +17,8 @@
 
 import frappe
 import json
-from frappe.utils import now_datetime, today, add_days, get_datetime
+from datetime import datetime, time as dt_time
+from frappe.utils import now_datetime, today, add_days, get_datetime, getdate, cint
 from aramex_connector.api import call_aramex_tracking_api
 
 TERMINAL_STATUSES   = {"Delivered", "Cancelled"}
@@ -432,8 +433,14 @@ def _handle_delivered(doc_name, is_return, delivery_dt=None):
     custom_delivery_time, instead of defaulting to today().
     """
     updated = []
-    delivery_date_val = delivery_dt.date() if delivery_dt else today()
-    delivery_time_val = delivery_dt.time() if delivery_dt else None
+    # delivery_dt may be a datetime (real Aramex timestamp), a plain date
+    # (estimated delivery, no time known) or None (fallback: today).
+    if isinstance(delivery_dt, datetime):
+        delivery_date_val, delivery_time_val = delivery_dt.date(), delivery_dt.time()
+    elif delivery_dt:
+        delivery_date_val, delivery_time_val = delivery_dt, None
+    else:
+        delivery_date_val, delivery_time_val = today(), None
 
     for so_name in _get_linked_sales_orders(doc_name):
         try:
@@ -474,6 +481,203 @@ def _handle_cancelled(doc_name, is_return):
                 message=frappe.get_traceback(),
             )
     return updated
+
+
+# ── Single shipment: "Update Delivery Status" button ─────────────────────────
+
+@frappe.whitelist()
+def update_delivery_status(shipment):
+    """
+    Same logic as the hourly job (queue_aramex_status_update_jobs ->
+    process_shipment_chunk), for ONE shipment. Updates the Aramex Shipment
+    and its linked Sales Orders. Called from Actions > Update Delivery Status.
+    """
+    doc = frappe.get_doc("Aramex Shipment", shipment)
+    doc.check_permission("write")
+
+    if doc.docstatus != 1 or not doc.awb_number:
+        frappe.throw("Shipment must be submitted and have an AWB number.")
+
+    meta = {
+        "name": doc.name,
+        "awb_number": doc.awb_number,
+        "shipment_status": doc.shipment_status,
+        "is_return": doc.is_return,
+    }
+
+    result = call_aramex_tracking_api([doc.awb_number], get_last_update_only=False)
+    if result.get("has_errors"):
+        msg = "; ".join(n.get("message", "") for n in (result.get("notifications") or [])) or "Aramex API error"
+        return {"status": "error", "message": msg}
+
+    updates = (result.get("tracking_results") or {}).get(doc.awb_number)
+    if not updates:
+        frappe.db.set_value("Aramex Shipment", doc.name, "custom_last_checked", now_datetime())
+        frappe.db.commit()
+        return {"status": "no_data", "message": "Aramex has no tracking information for this AWB."}
+
+    row = _process_and_build_row(meta, updates)
+    frappe.db.commit()
+
+    return {
+        "status": "ok",
+        "previous_status": row["previous_status"],
+        "new_status": row["new_status"] or row["previous_status"],
+        "sales_orders_updated": row["sales_orders_updated"],
+        "message": row["remarks"] or row["update_description"] or "Updated",
+    }
+
+
+# ── Bulk fix: old shipments stuck without a delivery status/date ─────────────
+
+STALE_AFTER_DAYS      = 30   # only shipments created more than this many days ago
+ESTIMATED_DELIVERY_DAYS = 2  # shipment date + N days when Aramex has no data
+
+
+def _stale_shipment_filters(older_than_days):
+    return {
+        "docstatus": 1,
+        "awb_number": ["!=", ""],
+        "shipment_status": ["not in", list(TERMINAL_STATUSES)],
+        "creation": ["<", add_days(today(), -cint(older_than_days))],
+    }
+
+
+@frappe.whitelist()
+def fix_missing_delivery_status(older_than_days=STALE_AFTER_DAYS, dry_run=1):
+    """
+    One-time recovery. Call from bench console:
+        from aramex_connector.tasks import fix_missing_delivery_status
+        fix_missing_delivery_status(dry_run=1)   # count only, changes nothing
+        fix_missing_delivery_status(dry_run=0)   # queue the real run
+
+    Targets submitted Aramex Shipments NOT Delivered/Cancelled and created
+    more than `older_than_days` ago. Each AWB is checked against Aramex:
+      - has tracking data  -> normal status logic (real status/date)
+      - NO tracking data   -> Delivered, delivery date = shipment date + 2,
+                              copied to the linked Sales Order(s)
+    If the Aramex call itself fails the shipment is left untouched.
+    """
+    frappe.only_for("System Manager")
+
+    names = frappe.get_all("Aramex Shipment", filters=_stale_shipment_filters(older_than_days), pluck="name")
+    if cint(dry_run):
+        return {"dry_run": True, "matching_shipments": len(names), "sample": names[:10]}
+
+    chunks = [names[i:i + CHUNK_SIZE] for i in range(0, len(names), CHUNK_SIZE)]
+    for idx, chunk in enumerate(chunks):
+        frappe.enqueue(
+            "aramex_connector.tasks.process_stale_shipment_chunk",
+            queue="long",
+            timeout=5400,
+            job_name=f"aramex_fix_stale_chunk_{idx+1}_of_{len(chunks)}",
+            shipment_names=chunk,
+        )
+    return {"dry_run": False, "queued": len(names), "chunks": len(chunks)}
+
+
+def process_stale_shipment_chunk(shipment_names):
+    log = None
+    if frappe.db.exists("DocType", "Aramex Tracking Log"):
+        log = frappe.new_doc("Aramex Tracking Log")
+        log.executed_at = now_datetime()
+        log.total_checked = len(shipment_names)
+        log.total_updated = 0
+        log.total_delivered = 0
+        log.total_cancelled = 0
+        log.status = "Success"
+
+    shipments = frappe.get_all(
+        "Aramex Shipment",
+        filters={"name": ["in", shipment_names]},
+        fields=["name", "awb_number", "shipment_status", "is_return", "shipmet_date", "creation", "remarks"],
+    )
+    awb_to_shipment = {s["awb_number"]: s for s in shipments if s["awb_number"]}
+    awb_list = list(awb_to_shipment.keys())
+    api_failed = False
+
+    for start in range(0, len(awb_list), BATCH_SIZE):
+        batch = awb_list[start:start + BATCH_SIZE]
+        try:
+            result = call_aramex_tracking_api(batch, get_last_update_only=False)
+        except Exception:
+            result = {"has_errors": True, "notifications": [{"message": frappe.get_traceback()[:300]}]}
+
+        if result.get("has_errors"):
+            # API problem — NOT proof of "no tracking"; leave these untouched.
+            api_failed = True
+            msg = "; ".join(n.get("message", "") for n in (result.get("notifications") or []))
+            if log:
+                for awb in batch:
+                    sm = awb_to_shipment[awb]
+                    log.append("results", {
+                        "shipment": sm["name"], "awb_number": awb, "is_return": sm["is_return"],
+                        "previous_status": sm["shipment_status"],
+                        "remarks": f"SKIPPED - Aramex API error: {msg}"[:500],
+                    })
+            continue
+
+        tracking = result.get("tracking_results") or {}
+        for awb in batch:
+            sm = awb_to_shipment[awb]
+            try:
+                if tracking.get(awb):
+                    row = _process_and_build_row(sm, tracking[awb])
+                else:
+                    row = _mark_delivered_without_tracking(sm)
+            except Exception:
+                api_failed = True
+                err = frappe.get_traceback()
+                frappe.log_error(title=f"Aramex fix stale — failed [{sm['name']}]", message=err)
+                row = {"shipment": sm["name"], "awb_number": awb, "is_return": sm["is_return"],
+                       "previous_status": sm["shipment_status"], "remarks": f"ERROR: {err[-300:]}"}
+
+            if log:
+                log.append("results", row)
+                if row.get("new_status") and row["new_status"] != row["previous_status"]:
+                    log.total_updated += 1
+                if row.get("new_status") == "Delivered":
+                    log.total_delivered += 1
+                if row.get("new_status") == "Cancelled":
+                    log.total_cancelled += 1
+        frappe.db.commit()
+
+    if log:
+        if api_failed:
+            log.status = "Partial" if log.total_updated > 0 else "Failed"
+        try:
+            log.insert(ignore_permissions=True)
+            frappe.db.commit()
+        except Exception:
+            frappe.log_error(title="Aramex fix stale — log save failed", message=frappe.get_traceback())
+
+
+def _mark_delivered_without_tracking(sm):
+    """No tracking at Aramex: mark Delivered, delivery date = shipment date + 2."""
+    base_date = getdate(sm.get("shipmet_date") or sm["creation"])
+    est_date = getdate(add_days(base_date, ESTIMATED_DELIVERY_DAYS))
+    note = (f"No Aramex tracking data - auto-marked Delivered on "
+            f"{today()}; delivery date estimated as shipment date + {ESTIMATED_DELIVERY_DAYS} days")
+
+    frappe.db.set_value("Aramex Shipment", sm["name"], {
+        "shipment_status": "Delivered",
+        "delivery_datetime": datetime.combine(est_date, dt_time.min),
+        "custom_last_checked": now_datetime(),
+        "last_status_description": note[:500],
+        "remarks": ((sm.get("remarks") + "\n") if sm.get("remarks") else "") + note,
+    })
+    updated_sos = _handle_delivered(sm["name"], bool(sm["is_return"]), est_date)
+
+    return {
+        "shipment": sm["name"],
+        "awb_number": sm["awb_number"],
+        "is_return": sm["is_return"],
+        "previous_status": sm["shipment_status"],
+        "new_status": "Delivered",
+        "update_description": f"Estimated delivery {est_date}",
+        "sales_orders_updated": ", ".join(updated_sos),
+        "remarks": note,
+    }
 
 
 # ── Diagnostic — kept for manual debugging ────────────────────────────────────

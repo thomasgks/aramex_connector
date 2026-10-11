@@ -368,6 +368,124 @@ def handle_errors(response, doc):
     })
     frappe.log_error(f"Aramex Error: {json.dumps(errors)}", doc.name)
     frappe.throw("<br>".join(errors))
+
+# ***************************************** LABEL REGENERATION *****************************************
+
+def get_linked_sales_orders(shipment_name):
+    """Unique Sales Orders linked to an Aramex Shipment via its Delivery Notes."""
+    sales_orders = set()
+    for row in frappe.get_all("Aramex Shipment Delivery Note",
+                              filters={"parent": shipment_name}, fields=["delivery_note"]):
+        if not row.delivery_note:
+            continue
+        for item in frappe.get_all("Delivery Note Item",
+                                   filters={"parent": row.delivery_note, "against_sales_order": ["!=", ""]},
+                                   fields=["against_sales_order"]):
+            sales_orders.add(item.against_sales_order)
+    return sales_orders
+
+
+def _extract_label_url(response):
+    """Return (label_url, error_message) from a PrintLabel response (JSON or XML)."""
+    try:
+        data = response.json()
+        if data.get("HasErrors"):
+            msgs = [f"{n.get('Code')}: {n.get('Message')}" for n in (data.get("Notifications") or [])]
+            return None, "; ".join(msgs) or "Aramex returned an error"
+        return ((data.get("ShipmentLabel") or {}).get("LabelURL") or None), None
+    except ValueError:
+        pass
+
+    xml_string = html.unescape(response.text)
+    root = ET.fromstring(xml_string)
+    ns = {"ns": "http://ws.aramex.net/ShippingAPI/v1/"}
+    has_errors = root.find(".//ns:HasErrors", ns)
+    if has_errors is not None and has_errors.text == "true":
+        msgs = [f"{n.findtext('ns:Code', '', ns)}: {n.findtext('ns:Message', '', ns)}"
+                for n in root.findall(".//ns:Notifications/ns:Notification", ns)]
+        return None, "; ".join(msgs) or "Aramex returned an error"
+    node = root.find(".//ns:ShipmentLabel/ns:LabelURL", ns)
+    return (node.text if node is not None and node.text else None), None
+
+
+@frappe.whitelist()
+def regenerate_label(shipment):
+    """
+    Ask Aramex (PrintLabel) to generate a fresh label for an existing AWB and
+    replace the stored label URL on the Aramex Shipment, its linked Sales
+    Orders (header) and the matching Sales Order Items.
+    """
+    doc = frappe.get_doc("Aramex Shipment", shipment)
+    doc.check_permission("write")
+
+    if doc.docstatus != 1:
+        frappe.throw("Label can only be regenerated for a submitted Aramex Shipment.")
+    if not doc.awb_number:
+        frappe.throw("This shipment has no AWB number.")
+
+    settings = frappe.get_single("Aramex Setting")
+    base_url = settings.test_url if settings.mode == "Test" else settings.production_url
+    full_url = base_url.rstrip("/") + "/PrintLabel"
+
+    payload = {
+        "ClientInfo": {
+            "UserName": settings.user_name,
+            "Password": settings.get_password("password"),
+            "Version": settings.api_version,
+            "AccountNumber": settings.account_number,
+            "AccountPin": settings.account_pin,
+            "AccountEntity": settings.account_entity,
+            "AccountCountryCode": settings.account_country_code,
+            "Source": 24
+        },
+        "Transaction": {
+            "Reference1": doc.name,
+            "Reference2": "", "Reference3": "", "Reference4": "", "Reference5": ""
+        },
+        "LabelInfo": {"ReportID": 9729, "ReportType": "URL"},
+        "OriginEntity": settings.account_entity,
+        "ProductGroup": settings.default_product_group,
+        "ShipmentNumber": doc.awb_number,
+    }
+
+    try:
+        response = requests.post(
+            full_url, json=payload, timeout=30,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+    except requests.exceptions.RequestException as e:
+        frappe.log_error(title=f"Aramex Regenerate Label — network error [{doc.name}]", message=str(e))
+        frappe.throw(f"Could not connect to Aramex: {e}")
+
+    if response.status_code != 200:
+        frappe.log_error(title=f"Aramex Regenerate Label — HTTP {response.status_code} [{doc.name}]",
+                         message=response.text[:5000])
+        frappe.throw(f"Aramex returned HTTP {response.status_code}.")
+
+    try:
+        label_url, error = _extract_label_url(response)
+    except Exception:
+        frappe.log_error(title=f"Aramex Regenerate Label — unparsable response [{doc.name}]",
+                         message=response.text[:5000])
+        frappe.throw("Could not read Aramex response. See Error Log.")
+
+    if error or not label_url:
+        frappe.log_error(title=f"Aramex Regenerate Label — failed [{doc.name}]", message=response.text[:5000])
+        frappe.throw(f"Aramex could not generate a new label: {error or 'no label URL returned'}")
+
+    # Replace the stored URL everywhere
+    frappe.db.set_value("Aramex Shipment", doc.name, "label_url", label_url)
+    updated_sos = []
+    for so_name in get_linked_sales_orders(doc.name):
+        frappe.db.set_value("Sales Order", so_name, "custom_label_url", label_url)
+        frappe.db.set_value("Sales Order Item",
+                            {"parent": so_name, "custom_awb_number": doc.awb_number},
+                            "custom_label_url", label_url)
+        updated_sos.append(so_name)
+    frappe.db.commit()
+
+    return {"label_url": label_url, "sales_orders_updated": sorted(updated_sos)}
+
 #OLD   
 @frappe.whitelist()
 def create_aramex_shipment_ws(doc, method):

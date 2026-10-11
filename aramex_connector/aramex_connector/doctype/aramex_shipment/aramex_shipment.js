@@ -33,6 +33,47 @@ frappe.ui.form.on('Aramex Shipment', {
           });
         }, __('Actions'));
   
+        if (frm.doc.awb_number) {
+          // Actions > Update Delivery Status (same logic as the hourly job)
+          frm.add_custom_button(__('Update Delivery Status'), () => {
+            frappe.call({
+              method: 'aramex_connector.tasks.update_delivery_status',
+              args: { shipment: frm.doc.name },
+              freeze: true,
+              freeze_message: __('Checking Aramex...'),
+              callback: function(r) {
+                const m = r.message || {};
+                if (m.status === 'ok') {
+                  let msg = __('Status: {0} → {1}', [m.previous_status || '-', m.new_status || '-']);
+                  if (m.sales_orders_updated) msg += '<br>' + __('Sales Orders updated: {0}', [m.sales_orders_updated]);
+                  frappe.show_alert({ message: msg, indicator: 'green' }, 8);
+                } else {
+                  frappe.msgprint({ title: __('Update Delivery Status'), message: m.message || __('No update'), indicator: 'orange' });
+                }
+                frm.reload_doc();
+              }
+            });
+          }, __('Actions'));
+
+          // Actions > Regenerate Label (when the stored label PDF is missing/404)
+          frm.add_custom_button(__('Regenerate Label'), () => {
+            frappe.confirm(__('Request a new label from Aramex and replace the stored Label URL on this shipment and its Sales Orders?'), () => {
+              frappe.call({
+                method: 'aramex_connector.api.regenerate_label',
+                args: { shipment: frm.doc.name },
+                freeze: true,
+                freeze_message: __('Requesting new label from Aramex...'),
+                callback: function(r) {
+                  if (r.message && r.message.label_url) {
+                    frappe.show_alert({ message: __('New label generated'), indicator: 'green' }, 6);
+                    frm.reload_doc();
+                  }
+                }
+              });
+            });
+          }, __('Actions'));
+        }
+
         // Add "Print Label" button only if label_url exists
         if (frm.doc.label_url) {
           frm.add_custom_button(__('Download Label PDF'), function() {
