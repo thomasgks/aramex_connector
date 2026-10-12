@@ -37,7 +37,8 @@ IN_TRANSIT_KEYWORDS  = ["in transit", "departed operations", "received at",
                          "sms sent to consignee", "under processing",
                          "delivery scheduled", "delivery address corrected",
                          "shipment update"]
-SCHEDULED_KEYWORDS   = ["record created", "delivery scheduled"]
+SCHEDULED_KEYWORDS   = ["record created", "delivery scheduled",
+                         "pickup scheduled", "pickup re-scheduled", "pickup cancelled", "pickup canceled"]
 
 # ── Code-prefix fallback (used only if no description keyword matches) ───────
 CODE_PREFIX_MAP = [
@@ -63,13 +64,15 @@ def _get_cutoff():
 
 def _status_from_description(description, is_return):
     desc = (description or "").lower()
-    if is_return:
-        if any(k in desc for k in PICKED_UP_KEYWORDS):
-            return "Delivered"
-    else:
-        if any(k in desc for k in DELIVERED_KEYWORDS):
-            return "Delivered"
-    if any(k in desc for k in CANCELLED_KEYWORDS):
+    # "Delivered" counts for forward AND return shipments (a return that is
+    # delivered back to us has certainly been collected).
+    if any(k in desc for k in DELIVERED_KEYWORDS):
+        return "Delivered"
+    if is_return and any(k in desc for k in PICKED_UP_KEYWORDS):
+        return "Delivered"
+    # "Pickup Cancelled" / "Pickup Re-Scheduled" are pickup-request events,
+    # NOT a cancelled shipment - they are handled as "Scheduled" below.
+    if "pickup" not in desc and any(k in desc for k in CANCELLED_KEYWORDS):
         return "Cancelled"
     if any(k in desc for k in OUT_FOR_DELIVERY_KW):
         return "Shipped"
@@ -543,6 +546,20 @@ def _stale_shipment_filters(older_than_days):
     }
 
 
+def _wrongly_cancelled_shipments():
+    """Shipments marked Cancelled only because of a 'Pickup Cancelled' event."""
+    return frappe.get_all(
+        "Aramex Shipment",
+        filters={
+            "docstatus": 1,
+            "awb_number": ["!=", ""],
+            "shipment_status": "Cancelled",
+            "cancellation_reason": ["like", "%pickup%"],
+        },
+        pluck="name",
+    )
+
+
 @frappe.whitelist()
 def fix_missing_delivery_status(older_than_days=STALE_AFTER_DAYS, dry_run=1):
     """
@@ -552,7 +569,9 @@ def fix_missing_delivery_status(older_than_days=STALE_AFTER_DAYS, dry_run=1):
         fix_missing_delivery_status(dry_run=0)   # queue the real run
 
     Targets submitted Aramex Shipments NOT Delivered/Cancelled and created
-    more than `older_than_days` ago. Each AWB is checked against Aramex:
+    more than `older_than_days` ago, PLUS shipments wrongly set to Cancelled
+    by a "Pickup Cancelled" event (these are re-evaluated; if Aramex shows
+    Delivered they are corrected, otherwise left as they are). Each AWB is checked against Aramex:
       - has tracking data  -> normal status logic (real status/date)
       - NO tracking data   -> Delivered, delivery date = shipment date + 2,
                               copied to the linked Sales Order(s)
@@ -561,8 +580,11 @@ def fix_missing_delivery_status(older_than_days=STALE_AFTER_DAYS, dry_run=1):
     frappe.only_for("System Manager")
 
     names = frappe.get_all("Aramex Shipment", filters=_stale_shipment_filters(older_than_days), pluck="name")
+    wrongly_cancelled = _wrongly_cancelled_shipments()
+    names = names + [n for n in wrongly_cancelled if n not in set(names)]
     if cint(dry_run):
-        return {"dry_run": True, "matching_shipments": len(names), "sample": names[:10]}
+        return {"dry_run": True, "matching_shipments": len(names),
+                "of_which_cancelled_by_pickup_event": len(wrongly_cancelled), "sample": names[:10]}
 
     chunks = [names[i:i + CHUNK_SIZE] for i in range(0, len(names), CHUNK_SIZE)]
     for idx, chunk in enumerate(chunks):
@@ -623,6 +645,11 @@ def process_stale_shipment_chunk(shipment_names):
             try:
                 if tracking.get(awb):
                     row = _process_and_build_row(sm, tracking[awb])
+                elif sm["shipment_status"] == "Cancelled":
+                    # never auto-mark a Cancelled shipment as Delivered
+                    row = {"shipment": sm["name"], "awb_number": awb, "is_return": sm["is_return"],
+                           "previous_status": sm["shipment_status"],
+                           "remarks": "No Aramex tracking data - left as Cancelled"}
                 else:
                     row = _mark_delivered_without_tracking(sm)
             except Exception:
