@@ -953,6 +953,9 @@ def track_aramex_shipment(shipment_ids, get_last_update_only=False):
             "tracking_results": {}
         }
 
+TRACKING_LOGIN_ATTEMPTS = 5   # Aramex sometimes rejects valid logins intermittently
+
+
 def _tracking_pin_candidates(settings):
     """PIN values to try: the plain field (same as shipment creation) and the stored secret."""
     pins = []
@@ -1026,11 +1029,11 @@ def call_aramex_tracking_api(shipment_ids, get_last_update_only=False):
         # Make the API call. If Aramex rejects the login, try the other PIN source,
         # then one final retry after a short pause (rejections have been intermittent).
         pins = _tracking_pin_candidates(settings)
-        attempts = pins + [pins[0]]
+        attempts = [pins[i % len(pins)] for i in range(TRACKING_LOGIN_ATTEMPTS)]
         response = None
         for i, pin in enumerate(attempts):
-            if i == len(attempts) - 1 and len(attempts) > 1:
-                time.sleep(3)
+            if i > 0:
+                time.sleep(2 * i)  # 2s, 4s, 6s, 8s
             request["ClientInfo"]["AccountPin"] = pin
             response = client.service.TrackShipments(**request)
             if not _is_invalid_account(response):
@@ -1119,7 +1122,7 @@ def call_aramex_tracking_api(shipment_ids, get_last_update_only=False):
 
 
 @frappe.whitelist()
-def debug_aramex_login(awb=None):
+def debug_aramex_login(awb=None, repeat=3):
     """
     Diagnostic (System Manager). Open:
     /api/method/aramex_connector.api.debug_aramex_login
@@ -1139,7 +1142,13 @@ def debug_aramex_login(awb=None):
     except Exception:
         stored = None
 
+    try:
+        outbound_ip = requests.get("https://api.ipify.org", timeout=5).text
+    except Exception:
+        outbound_ip = "unknown"
+
     out = {
+        "outbound_ip": outbound_ip,
         "frappe_user": frappe.session.user,
         "mode": settings.mode,
         "test_awb": awb,
@@ -1173,14 +1182,15 @@ def debug_aramex_login(awb=None):
             "Shipments": [awb],
             "GetLastTrackingUpdateOnly": True,
         }
-        try:
-            r = client.service.TrackShipments(**req)
-            msgs = []
-            n = getattr(getattr(r, "Notifications", None), "Notification", None) or []
-            for x in (n if isinstance(n, list) else [n]):
-                msgs.append(str(getattr(x, "Message", "")))
-            out["attempts"].append({"source": label, "has_errors": bool(getattr(r, "HasErrors", True)),
-                                    "messages": msgs})
-        except Exception as e:
-            out["attempts"].append({"source": label, "result": f"exception: {e}"})
+        results = []
+        for _ in range(int(repeat)):
+            try:
+                r = client.service.TrackShipments(**req)
+                n = getattr(getattr(r, "Notifications", None), "Notification", None) or []
+                msgs = [str(getattr(x, "Message", "")) for x in (n if isinstance(n, list) else [n])]
+                results.append("OK" if not getattr(r, "HasErrors", True) else "; ".join(msgs) or "error")
+            except Exception as e:
+                results.append(f"exception: {e}")
+            time.sleep(1)
+        out["attempts"].append({"source": label, "results": results})
     return out
