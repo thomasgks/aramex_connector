@@ -315,6 +315,14 @@ def process_shipment_chunk(shipment_names, chunk_index=1, chunk_total=1):
                 if sm:
                     frappe.db.set_value("Aramex Shipment", sm["name"],
                         {"custom_last_checked": now_datetime()})
+                    if log:
+                        log.append("results", {
+                            "shipment":        sm["name"],
+                            "awb_number":      awb,
+                            "is_return":       sm["is_return"],
+                            "previous_status": sm["shipment_status"],
+                            "remarks":         "No tracking data returned by Aramex for this AWB"
+                        })
 
     if api_failed and log:
         log.status = "Partial" if log.total_updated > 0 else "Failed"
@@ -372,6 +380,14 @@ def _process_and_build_row(shipment_meta, all_updates):
 
     if not new_status:
         row["remarks"] = "Could not resolve status from any update in history"
+        frappe.db.set_value("Aramex Shipment", doc_name, update_values)
+        return row
+
+    prev_rank = STATUS_RANK.get((prev_status or "").strip().title(), 0)
+    if (new_status not in TERMINAL_STATUSES
+            and STATUS_RANK.get(new_status, 0) < prev_rank):
+        row["new_status"] = prev_status
+        row["remarks"] = f"Kept {prev_status}: Aramex history only shows earlier stage ({new_status})"
         frappe.db.set_value("Aramex Shipment", doc_name, update_values)
         return row
 
