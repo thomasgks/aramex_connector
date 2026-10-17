@@ -983,7 +983,7 @@ def call_aramex_tracking_api(shipment_ids, get_last_update_only=False):
                 "Password": settings.get_password("password"),
                 "Version": settings.api_version or "1.0",
                 "AccountNumber": settings.account_number,
-                "AccountPin": settings.get_password("account_pin"),
+                "AccountPin": settings.account_pin or settings.get_password("account_pin", raise_exception=False),
                 "AccountEntity": settings.account_entity,
                 "AccountCountryCode": settings.account_country_code,
                 "Source": 24
