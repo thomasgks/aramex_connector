@@ -764,6 +764,79 @@ def shipment_status_summary():
     }
 
 
+@frappe.whitelist()
+def sync_delivery_dates(dry_run=1, fill_missing_datetime=1):
+    """
+    Local repair (no Aramex calls). Copies the delivery date/time of every
+    Delivered, non-return Aramex Shipment onto its linked Sales Order(s) where
+    the Sales Order has no delivery_date or a different one.
+
+      /api/method/aramex_connector.tasks.sync_delivery_dates?dry_run=1   (counts only)
+      /api/method/aramex_connector.tasks.sync_delivery_dates?dry_run=0   (apply)
+
+    Also fills delivery_datetime on Delivered shipments that have none, using
+    shipment date + 2 days (marked in Remarks), when fill_missing_datetime=1.
+    The time of day is only copied when it is real (not the 00:00 of an estimate).
+    """
+    frappe.only_for("System Manager")
+    dry_run = cint(dry_run)
+
+    missing = frappe.db.sql(
+        """SELECT name, shipmet_date, creation, remarks FROM `tabAramex Shipment`
+           WHERE docstatus = 1 AND shipment_status = 'Delivered' AND delivery_datetime IS NULL""",
+        as_dict=True)
+
+    if not dry_run and cint(fill_missing_datetime):
+        note = f"Delivery date estimated as shipment date + {ESTIMATED_DELIVERY_DAYS} days (no Aramex delivery timestamp) - set on {today()}"
+        for sm in missing:
+            est = getdate(add_days(getdate(sm.shipmet_date or sm.creation), ESTIMATED_DELIVERY_DAYS))
+            frappe.db.set_value("Aramex Shipment", sm.name, {
+                "delivery_datetime": datetime.combine(est, dt_time.min),
+                "remarks": ((sm.remarks + "\n") if sm.remarks else "") + note,
+            })
+        frappe.db.commit()
+
+    rows = frappe.db.sql(
+        """SELECT s.name AS shipment, s.delivery_datetime AS dt, so.name AS so,
+                  so.delivery_date AS old_date, so.custom_delivery_time AS old_time
+           FROM `tabAramex Shipment` s
+           JOIN `tabAramex Shipment Delivery Note` sdn ON sdn.parent = s.name
+           JOIN (SELECT DISTINCT parent, against_sales_order FROM `tabDelivery Note Item`
+                 WHERE IFNULL(against_sales_order, '') != '') dni ON dni.parent = sdn.delivery_note
+           JOIN `tabSales Order` so ON so.name = dni.against_sales_order
+           WHERE s.docstatus = 1 AND s.shipment_status = 'Delivered' AND s.is_return = 0
+             AND s.delivery_datetime IS NOT NULL AND so.docstatus != 2
+             AND (so.delivery_date IS NULL
+                  OR so.delivery_date != DATE(s.delivery_datetime)
+                  OR (TIME(s.delivery_datetime) != '00:00:00'
+                      AND (so.custom_delivery_time IS NULL
+                           OR so.custom_delivery_time != TIME(s.delivery_datetime))))
+           ORDER BY s.delivery_datetime""",
+        as_dict=True)
+
+    sample = [{"so": r.so, "shipment": r.shipment, "old_date": str(r.old_date),
+               "new_date": str(getdate(r.dt))} for r in rows[:10]]
+    unique_sos = len({r.so for r in rows})
+
+    if dry_run:
+        return {"dry_run": True,
+                "delivered_shipments_without_datetime": len(missing),
+                "sales_orders_to_update": unique_sos, "sample": sample}
+
+    for n, r in enumerate(rows, 1):
+        values = {"delivery_date": getdate(r.dt)}
+        if r.dt.time() != dt_time.min:
+            values["custom_delivery_time"] = r.dt.time()
+        frappe.db.set_value("Sales Order", r.so, values)
+        if n % 500 == 0:
+            frappe.db.commit()
+    frappe.db.commit()
+
+    return {"dry_run": False,
+            "delivered_shipments_filled": len(missing) if cint(fill_missing_datetime) else 0,
+            "sales_orders_updated": unique_sos, "sample": sample}
+
+
 # ── Diagnostic — kept for manual debugging ────────────────────────────────────
 
 @frappe.whitelist()
