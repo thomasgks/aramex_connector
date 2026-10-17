@@ -953,6 +953,33 @@ def track_aramex_shipment(shipment_ids, get_last_update_only=False):
             "tracking_results": {}
         }
 
+def _tracking_pin_candidates(settings):
+    """PIN values to try: the plain field (same as shipment creation) and the stored secret."""
+    pins = []
+    for getter in (lambda: settings.account_pin,
+                   lambda: settings.get_password("account_pin", raise_exception=False)):
+        try:
+            p = getter()
+        except Exception:
+            p = None
+        if p and p not in pins:
+            pins.append(p)
+    return pins or [None]
+
+
+def _is_invalid_account(response):
+    """True if a TrackShipments response is rejected because of the login details."""
+    try:
+        if response is None or not getattr(response, "HasErrors", False):
+            return False
+        notifs = getattr(getattr(response, "Notifications", None), "Notification", None) or []
+        if not isinstance(notifs, list):
+            notifs = [notifs]
+        return any("invalid account" in str(getattr(n, "Message", "")).lower() for n in notifs)
+    except Exception:
+        return False
+
+
 def call_aramex_tracking_api(shipment_ids, get_last_update_only=False):
     """
     Make the actual SOAP API call to Aramex tracking service with robust error handling
@@ -983,7 +1010,7 @@ def call_aramex_tracking_api(shipment_ids, get_last_update_only=False):
                 "Password": settings.get_password("password"),
                 "Version": settings.api_version or "1.0",
                 "AccountNumber": settings.account_number,
-                "AccountPin": settings.account_pin or settings.get_password("account_pin", raise_exception=False),
+                "AccountPin": None,  # filled per attempt below
                 "AccountEntity": settings.account_entity,
                 "AccountCountryCode": settings.account_country_code,
                 "Source": 24
@@ -996,8 +1023,20 @@ def call_aramex_tracking_api(shipment_ids, get_last_update_only=False):
             "GetLastTrackingUpdateOnly": get_last_update_only
         }
         
-        # Make the API call with error handling
-        response = client.service.TrackShipments(**request)
+        # Make the API call. If Aramex rejects the login, try the other PIN source,
+        # then one final retry after a short pause (rejections have been intermittent).
+        pins = _tracking_pin_candidates(settings)
+        attempts = pins + [pins[0]]
+        response = None
+        for i, pin in enumerate(attempts):
+            if i == len(attempts) - 1 and len(attempts) > 1:
+                time.sleep(3)
+            request["ClientInfo"]["AccountPin"] = pin
+            response = client.service.TrackShipments(**request)
+            if not _is_invalid_account(response):
+                if i > 0:
+                    frappe.logger().info(f"Aramex tracking login succeeded on attempt {i + 1}")
+                break
         
         # Initialize default result structure
         result = {
@@ -1077,3 +1116,71 @@ def call_aramex_tracking_api(shipment_ids, get_last_update_only=False):
         }],
         "tracking_results": {}
     }
+
+
+@frappe.whitelist()
+def debug_aramex_login(awb=None):
+    """
+    Diagnostic (System Manager). Open:
+    /api/method/aramex_connector.api.debug_aramex_login
+    Tries the tracking login with each PIN source and reports which one Aramex
+    accepts. Never returns the actual secrets.
+    """
+    frappe.only_for("System Manager")
+    settings = frappe.get_single("Aramex Setting")
+    if not awb:
+        awb = frappe.db.get_value("Aramex Shipment",
+                                  {"docstatus": 1, "awb_number": ["!=", ""]}, "awb_number",
+                                  order_by="creation desc")
+
+    plain = settings.account_pin
+    try:
+        stored = settings.get_password("account_pin", raise_exception=False)
+    except Exception:
+        stored = None
+
+    out = {
+        "frappe_user": frappe.session.user,
+        "mode": settings.mode,
+        "test_awb": awb,
+        "account_number": settings.account_number,
+        "user_name": settings.user_name,
+        "password_set": bool(settings.get_password("password", raise_exception=False)),
+        "pin_field_len": len(plain or ""),
+        "pin_secret_len": len(stored or ""),
+        "pin_field_equals_secret": (plain == stored),
+        "attempts": [],
+    }
+
+    client = Client("http://ws.aramex.net/shippingapi/tracking/service_1_0.svc?wsdl",
+                    transport=Transport(session=requests.Session(), timeout=30))
+    for label, pin in (("pin_field", plain), ("pin_secret", stored)):
+        if not pin:
+            out["attempts"].append({"source": label, "result": "empty - not tried"})
+            continue
+        req = {
+            "ClientInfo": {
+                "UserName": settings.user_name,
+                "Password": settings.get_password("password"),
+                "Version": settings.api_version or "1.0",
+                "AccountNumber": settings.account_number,
+                "AccountPin": pin,
+                "AccountEntity": settings.account_entity,
+                "AccountCountryCode": settings.account_country_code,
+                "Source": 24,
+            },
+            "Transaction": {"Reference1": "ERPNext Diagnostic"},
+            "Shipments": [awb],
+            "GetLastTrackingUpdateOnly": True,
+        }
+        try:
+            r = client.service.TrackShipments(**req)
+            msgs = []
+            n = getattr(getattr(r, "Notifications", None), "Notification", None) or []
+            for x in (n if isinstance(n, list) else [n]):
+                msgs.append(str(getattr(x, "Message", "")))
+            out["attempts"].append({"source": label, "has_errors": bool(getattr(r, "HasErrors", True)),
+                                    "messages": msgs})
+        except Exception as e:
+            out["attempts"].append({"source": label, "result": f"exception: {e}"})
+    return out

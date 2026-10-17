@@ -275,6 +275,8 @@ def process_shipment_chunk(shipment_names, chunk_index=1, chunk_total=1):
             continue
 
         if result.get("has_errors") or not result.get("tracking_results"):
+            if result.get("has_errors"):
+                api_failed = True
             msg = "; ".join(
                 n.get("message", "") for n in (result.get("notifications") or [])
             ) or "No tracking results returned"
