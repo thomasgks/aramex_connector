@@ -725,6 +725,45 @@ def _mark_delivered_without_tracking(sm):
     }
 
 
+@frappe.whitelist()
+def shipment_status_summary():
+    """
+    Read-only counts to locate records with missing delivery data. Open:
+    /api/method/aramex_connector.tasks.shipment_status_summary
+    """
+    frappe.only_for("System Manager")
+    cutoff = add_days(today(), -STALE_AFTER_DAYS)
+
+    by_status = frappe.db.sql(
+        """SELECT shipment_status, is_return, COUNT(*) AS n
+           FROM `tabAramex Shipment` WHERE docstatus = 1
+           GROUP BY shipment_status, is_return ORDER BY n DESC""", as_dict=True)
+
+    delivered_no_dt = frappe.db.sql(
+        """SELECT is_return, COUNT(*) AS n FROM `tabAramex Shipment`
+           WHERE docstatus = 1 AND shipment_status = 'Delivered'
+             AND (delivery_datetime IS NULL)
+           GROUP BY is_return""", as_dict=True)
+
+    non_final_old = frappe.db.sql(
+        """SELECT shipment_status, COUNT(*) AS n FROM `tabAramex Shipment`
+           WHERE docstatus = 1 AND shipment_status NOT IN ('Delivered', 'Cancelled')
+             AND creation < %s GROUP BY shipment_status""", (cutoff,), as_dict=True)
+
+    so_by_status = frappe.db.sql(
+        """SELECT custom_ecommerce_status AS status, COUNT(*) AS n
+           FROM `tabSales Order`
+           WHERE IFNULL(custom_awb_number, '') != '' AND docstatus = 1
+           GROUP BY custom_ecommerce_status ORDER BY n DESC""", as_dict=True)
+
+    return {
+        "shipments_by_status_and_return": by_status,
+        "delivered_without_delivery_datetime": delivered_no_dt,
+        f"not_delivered_or_cancelled_older_than_{STALE_AFTER_DAYS}_days": non_final_old,
+        "sales_orders_with_awb_by_ecommerce_status": so_by_status,
+    }
+
+
 # ── Diagnostic — kept for manual debugging ────────────────────────────────────
 
 @frappe.whitelist()
